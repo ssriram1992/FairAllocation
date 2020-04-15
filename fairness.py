@@ -152,6 +152,87 @@ def getMinimalGurobi(M, Adj):
     M2.setObjective(gp.quicksum(M2.getVarByName("x["+str(v)+"]") for v in range(nV)))
     M2.update()
     return M2
+def greedDiff(nV, Adj, f, M2, k=1):
+    """
+    Greedily maximizes fairness (according to max-min metrix) 
+    over multiple rounds as informed by getMinimalGurobi()
+    
+    Parameters
+    ----------
+    nV: int
+        number of vertices
+    Adj: ndArray
+        Adjacency matrix 
+    f:  ndArray
+        Benefit of v when an ambulance is in u is in f[u,v]
+    M2: gurobipy.Model
+        The model returned by getMinimalGurobi() after being solved. 
+        This should have details on the number of times ambulance has 
+        to be placed in each node v
+    k:  int
+        Number of ambulance vehicles
+    
+    Returns
+    -------
+    Allocs: list
+        A list where i-th element has the list of locations where 
+        ambulance has to be placed at the i-th round
+    Fairnesses: list
+        A list where i-th element denotes the unfairness at the end 
+        of i-th round.
+    """
+    # The maximum number of times ambulance can be placed at v
+    xLim = [round(M2.getVarByName("x["+str(v)+"]").X) for v in range(nV)]
+    # Welfare obtained by v so far.
+    tauSoFar = [0 for i in range(nV)]
+    # Number of times ambulance placed at v so far 
+    # xSoFar should be < xLim componentwise
+    xSoFar = [0 for i in range(nV)]
+    # Total number of roubds
+    nRounds = int(np.ceil(round(M2.objval)/k))
+    
+    Allocs = []
+    Fairnesses = []
+    for rnd in range(nRounds):
+        # gurobiModel
+#         print("Round:",rnd, "of", nRounds)
+        Mgreed = gp.Model()
+        Mgreed.setParam("LogToConsole",0)
+        strict = not (rnd==(nRounds-1))
+        strict = False
+
+        xt = Mgreed.addVars(range(nV), vtype=gp.GRB.BINARY, name="xt")
+        tau = Mgreed.addVars(range(nV),lb=0,vtype=gp.GRB.CONTINUOUS, name = "tau")
+
+        tauMax = Mgreed.addVar(obj=1)
+        tauMin = Mgreed.addVar(obj=-1)
+
+        for v in range(nV):
+            Mgreed.addConstr(xt[v] + gp.quicksum([f[u,v]*Adj[v,u]*xt[u] for u in range(nV)]) +tauSoFar[v] == tau[v])
+            if xSoFar[v] >= xLim[v]:
+                xt[v].ub = 0
+        Mgreed.addGenConstrMax(tauMax, [tau[v] for v in range(nV)], name="Max")
+        Mgreed.addGenConstrMin(tauMin, [tau[v] for v in range(nV)], name="Min")
+        # (0,0,0, ..., 0) should not be a solution - no good cut
+        Mgreed.addConstr(gp.quicksum(xt[v] for v in range(nV)) >= 1)
+
+        # Maximum k ambulance
+        if strict:
+            Mgreed.addConstr(gp.quicksum(xt[v] for v in range(nV)) == k)
+        else:
+            Mgreed.addConstr(gp.quicksum(xt[v] for v in range(nV)) <= k)
+        
+
+        Mgreed.update()
+        Mgreed.optimize()
+        alloc = [v for v in range(nV) if xt[v].X>0.5]
+        fairness = Mgreed.objval
+        Allocs.append(alloc)
+        Fairnesses.append(fairness)
+#         print("Ambulance at: ", alloc)
+        xSoFar = [xSoFar[v] + xt[v].X for v in range(nV)]
+        tauSoFar =[tau[i].X for i in range(nV)]
+    return Allocs, Fairnesses
 def extractAllocAgg(M, nV):
     """
     Extracts the x-solution from a gurobipy.Model
