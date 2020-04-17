@@ -152,7 +152,7 @@ def getMinimalGurobi(M, Adj):
     M2.setObjective(gp.quicksum(M2.getVarByName("x["+str(v)+"]") for v in range(nV)))
     M2.update()
     return M2
-def greedDiff(nV, Adj, f, M2, k=1):
+def greedDiff(nV, Adj, f, M2, k=1, strictness =False, verbose =False):
     """
     Greedily maximizes fairness (according to max-min metrix) 
     over multiple rounds as informed by getMinimalGurobi()
@@ -171,6 +171,8 @@ def greedDiff(nV, Adj, f, M2, k=1):
         to be placed in each node v
     k:  int
         Number of ambulance vehicles
+    verbose: Bool
+        Whether to print a line for each round of greedy optimization
     
     Returns
     -------
@@ -195,41 +197,43 @@ def greedDiff(nV, Adj, f, M2, k=1):
     Fairnesses = []
     for rnd in range(nRounds):
         # gurobiModel
-#         print("Round:",rnd, "of", nRounds)
-        Mgreed = gp.Model()
-        Mgreed.setParam("LogToConsole",0)
+
+        M = gp.Model()
+        M.setParam("LogToConsole",0)
         strict = not (rnd==(nRounds-1))
-        strict = False
+        if not strictness:
+            strict = False
 
-        xt = Mgreed.addVars(range(nV), vtype=gp.GRB.BINARY, name="xt")
-        tau = Mgreed.addVars(range(nV),lb=0,vtype=gp.GRB.CONTINUOUS, name = "tau")
+        xt = M.addVars(range(nV), vtype=gp.GRB.BINARY, name="xt")
+        tau = M.addVars(range(nV),lb=0,vtype=gp.GRB.CONTINUOUS, name = "tau")
 
-        tauMax = Mgreed.addVar(obj=1)
-        tauMin = Mgreed.addVar(obj=-1)
+        tauMax = M.addVar(obj=1)
+        tauMin = M.addVar(obj=-1)
 
         for v in range(nV):
-            Mgreed.addConstr(xt[v] + gp.quicksum([f[u,v]*Adj[v,u]*xt[u] for u in range(nV)]) +tauSoFar[v] == tau[v])
+            M.addConstr(xt[v] + gp.quicksum([f[u,v]*Adj[v,u]*xt[u] for u in range(nV)]) +tauSoFar[v] == tau[v])
             if xSoFar[v] >= xLim[v]:
                 xt[v].ub = 0
-        Mgreed.addGenConstrMax(tauMax, [tau[v] for v in range(nV)], name="Max")
-        Mgreed.addGenConstrMin(tauMin, [tau[v] for v in range(nV)], name="Min")
+        M.addGenConstrMax(tauMax, [tau[v] for v in range(nV)], name="Max")
+        M.addGenConstrMin(tauMin, [tau[v] for v in range(nV)], name="Min")
         # (0,0,0, ..., 0) should not be a solution - no good cut
-        Mgreed.addConstr(gp.quicksum(xt[v] for v in range(nV)) >= 1)
+        M.addConstr(gp.quicksum(xt[v] for v in range(nV)) >= 1)
 
         # Maximum k ambulance
         if strict:
-            Mgreed.addConstr(gp.quicksum(xt[v] for v in range(nV)) == k)
+            M.addConstr(gp.quicksum(xt[v] for v in range(nV)) == k)
         else:
-            Mgreed.addConstr(gp.quicksum(xt[v] for v in range(nV)) <= k)
+            M.addConstr(gp.quicksum(xt[v] for v in range(nV)) <= k)
         
 
-        Mgreed.update()
-        Mgreed.optimize()
+        M.update()
+        M.optimize()
         alloc = [v for v in range(nV) if xt[v].X>0.5]
-        fairness = Mgreed.objval
+        fairness = M.objval
         Allocs.append(alloc)
         Fairnesses.append(fairness)
-#         print("Ambulance at: ", alloc)
+        if verbose:
+            print("Round:",rnd, "of", nRounds, ":", alloc, "fairness: ",fairness)
         xSoFar = [xSoFar[v] + xt[v].X for v in range(nV)]
         tauSoFar =[tau[i].X for i in range(nV)]
     return Allocs, Fairnesses
