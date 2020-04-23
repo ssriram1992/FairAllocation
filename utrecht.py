@@ -14,6 +14,8 @@ class Utrecht:
         self.B = []
         # Location of the hospitals
         self.H = []
+        # Number of ambulances (as stated by the authors of "Improving fairness in ambulance planning by time sharing")
+        self.num_ambulances = 19
         self.load()
         self.build_graph()
 
@@ -59,9 +61,3 @@ class Utrecht:
         for i in self.E:
             if i[2] > seconds:
                 self.G.remove_edge(i[0], i[1])
-
-# Example
-u = Utrecht()
-print(len(u.G.edges))
-u.reduce_graph(1000)
-print(len(u.G.edges))
