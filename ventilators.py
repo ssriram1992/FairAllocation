@@ -62,6 +62,7 @@ tau = M.addVars(n, T, lb=0, vtype=gp.GRB.INTEGER, name='tau')
 
 # phi: Objective.
 phi = M.addVar(obj=1, lb=0, vtype=gp.GRB.INTEGER, name='phi')
+phi_ = M.addVars(n, lb=0, vtype=gp.GRB.INTEGER, name='phi_')
 
 
 ###############
@@ -100,15 +101,18 @@ for i in range(n):
 # Keep track of the shortages of ventilators.
 for i in range(n):
     for t in range(T):
-        M.addConstr(tau[i, t] == gp.max_(0, Q[i][t]-x[i, t]))
-        # M.addConstr(tau[i, t] == Q[i][t]-x[i, t])
+        # No max needed since LB of tau is already 0
+        M.addConstr(tau[i, t] == Q[i][t]-x[i, t])
 
         
 #############
 # OBJECTIVE #
 #############
 
-M.addConstr(phi == gp.quicksum(gp.max_(tau[i, t] for i in range(n)) for t in range(T)))
+for i in range(n):
+    M.addConstr(phi_[i] == gp.quicksum(tau[i, t] for t in range(T)))
+
+M.addGenConstrMax(phi, phi_)
 
 
 ###########
