@@ -30,6 +30,9 @@ V = ventutils.initial_supply()
 # R: Recovery time.
 R = 10
 
+# N_max: Number of ventilators available to be injected into the system.
+N_max = 13500
+
 
 #############
 # VARIABLES #
@@ -81,6 +84,10 @@ for t in range(T):
 for t in range(T):
     M.addConstr(gp.quicksum(x[i, t] for i in range(n)) <= N[t])
 
+# The total number of ventilators injected into the system must not be greater
+# than what is available to be injected.
+M.addConstr(gp.quicksum(N[t] for t in range(T)) <= N_max)
+    
 # The number of ventilators in the various locations should be consistent over
 # time, including consistency with the new ventilators injected into the system
 # and with the transfer of ventilators between locations.
