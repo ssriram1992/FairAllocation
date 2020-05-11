@@ -6,7 +6,7 @@ class Utrecht:
         self.G = nx.DiGraph()
         # The data identifies vertices with postal coldes. We map these postal codes to vertex ids 0, 1, ...
         self.pc = []
-        # A vertex is a list of [vertex id, inhabitant density, x coordinate, y coordinate] (the sum of inhabitant densities of all the vertices is equal to 1)
+        # A vertex is a list of [vertex id, population density, x coordinate, y coordinate] (the sum of inhabitant densities of all the vertices is equal to 1)
         self.V = []
         # The edges are weighted by the number of seconds it takes to go from one vertex to another
         self.E = []

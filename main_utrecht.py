@@ -2,10 +2,11 @@ import gurobipy as gp
 from math import ceil
 import networkx as nx
 import numpy as np
+import re
 from utrecht import *
 
+
 def basic_model():
-    # Model
     M = gp.Model()
     x = M.addVars(num_rounds, len(bases), vtype=gp.GRB.BINARY, name='x')
 
@@ -15,14 +16,24 @@ def basic_model():
 
     # A configuration must be "efficient", i.e., >=95% of the zones covered
     tau = M.addVars(num_rounds, range(n), vtype=gp.GRB.BINARY, name='tau')
+    tau2 = M.addVars(num_rounds, range(n), vtype=gp.GRB.BINARY, name='tau2')
     for i in range(num_rounds):
         for j in range(n):
             if j in bases:
                 M.addConstr((tau[i, j] == 1) >> (x[i, bases.index(j)]+gp.quicksum(x[i, k] * adj[bases[k], j] for k in range(len(bases))) >= 1))
+                M.addConstr((tau[i, j] == 0) >> (x[i, bases.index(j)]+gp.quicksum(x[i, k] * adj[bases[k], j] for k in range(len(bases))) == 0))
+                M.addConstr((tau2[i, j] == 1) >> (x[i, bases.index(j)]+gp.quicksum(x[i, k] * adj[bases[k], j] for k in range(len(bases))) >= 2))
+                M.addConstr((tau2[i, j] == 0) >> (x[i, bases.index(j)]+gp.quicksum(x[i, k] * adj[bases[k], j] for k in range(len(bases))) <= 1))
             else:
                 M.addConstr((tau[i, j] == 1) >> (gp.quicksum(x[i, k] * adj[bases[k], j] for k in range(len(bases))) >= 1))
+                M.addConstr((tau[i, j] == 0) >> (gp.quicksum(x[i, k] * adj[bases[k], j] for k in range(len(bases))) == 1))
+                M.addConstr((tau2[i, j] == 1) >> (gp.quicksum(x[i, k] * adj[bases[k], j] for k in range(len(bases))) >= 2))
+                M.addConstr((tau2[i, j] == 0) >> (gp.quicksum(x[i, k] * adj[bases[k], j] for k in range(len(bases))) <= 1))
     for i in range(num_rounds):
         M.addConstr(gp.quicksum(tau[i, j] for j in range(n)) >= ceil(0.95*n))
+
+    # Force tau2 to take nonzero values (we assume that a configuration where no one is double covered is improbable). This constraint only ensures that one zone is double covered. It must be used in conjunction with the epsilon value in the objective function which ensures that the number of tau2s in the optimal solution is maximal.
+    #M.addConstr(gp.quicksum([tau2[i, j] for i in range(num_rounds) for j in range(n)]) >= 1)
 
     # Transition cost: A maximum of max_transition vehicles can be moved when switching between configurations
     remain = M.addVars(num_rounds-1, range(len(bases)), vtype=gp.GRB.BINARY)
@@ -32,7 +43,7 @@ def basic_model():
     for i in range(num_rounds-1):
         M.addConstr(gp.quicksum(remain[i, j] for j in range(len(bases))) >= ceil((1-max_transition)*num_ambulances))
         
-    return M, tau
+    return M, tau, tau2
 
 # For efficiency we use the performance target for the Netherlands, i.e.,
 # that "95% of all calls should be reached within 15 minutes".
@@ -53,51 +64,105 @@ for i in range(n):
 adj = adj.astype(int)
 
 # Model parameters
-num_ambulances = 7
-num_rounds = 5
-max_transition = 0.25
+num_ambulances = 8 #7
+num_rounds = 2 #5
+max_transition = 0.5 #0.25
 
 # Model phase 1
-M1, tau = basic_model()
+M1, tau, tau2 = basic_model()
     
 # Objective
+# tau_max = M1.addVar(obj=1)
+# tau_min = M1.addVar(obj=-1)
+# tau_col = M1.addVars(range(n), vtype=gp.GRB.INTEGER, name='tau_col')
+# for i in range(n):
+#     M1.addConstr(tau_col[i] == gp.quicksum([tau[j, i] for j in range(num_rounds)]))
+# M1.addGenConstrMax(tau_max, [tau_col[i] for i in range(n)], name='tau_max')
+# M1.addGenConstrMin(tau_min, [tau_col[i] for i in range(n)], name='tau_min')
+
 tau_max = M1.addVar(obj=1)
 tau_min = M1.addVar(obj=-1)
 tau_col = M1.addVars(range(n), vtype=gp.GRB.INTEGER, name='tau_col')
 for i in range(n):
-    M1.addConstr(tau_col[i] == gp.quicksum([tau[j, i] for j in range(num_rounds)]))
+    M1.addConstr(tau_col[i] == gp.quicksum([tau2[j, i] for j in range(num_rounds)]))
 M1.addGenConstrMax(tau_max, [tau_col[i] for i in range(n)], name='tau_max')
 M1.addGenConstrMin(tau_min, [tau_col[i] for i in range(n)], name='tau_min')
+
+epsilon=0.005
+# tau2_epsilon = M1.addVar(obj=-epsilon)
+# M1.addConstr(tau2_epsilon == gp.quicksum([tau2[i, j] for i in range(num_rounds) for j in range(n)]))
 
 # Solve
 M1.update()
 M1.optimize()
 phi = M1.getObjective().getValue()
 
-# Model phase 2
-M2, tau = basic_model()
-    
-# Objective
-tau_max = M2.addVars(num_rounds, vtype=gp.GRB.INTEGER)
-tau_min = M2.addVars(num_rounds, vtype=gp.GRB.INTEGER)
-tau_col = M2.addVars(num_rounds, n, vtype=gp.GRB.INTEGER, name='tau_col')
-for i in range(num_rounds):
-    for j in range(n):
-        M2.addConstr(tau_col[i, j] == gp.quicksum([tau[k, j] for k in range(i+1)]))
-for i in range(num_rounds):
-    M2.addGenConstrMax(tau_max[i], [tau_col[i, j] for j in range(n)], name='tau_max')
-    M2.addGenConstrMin(tau_min[i], [tau_col[i, j] for j in range(n)], name='tau_min')
-M2.setObjective(gp.quicksum([tau_max[i]-tau_min[i] for i in range(num_rounds)]), gp.GRB.MINIMIZE)
-
-# Ensure that the final path leads to the optimal solution
-M2.addConstr(tau_max[num_rounds-1]-tau_min[num_rounds-1] == phi)
-
-# Solve
-M2.update()
-M2.optimize()
-
-print('Status:', M2.Status)
-sol = M2.getVars()
+print('Status (2 is optimal):', M1.Status)
+sol = M1.getVars()
+out_x = [[] for _ in range(num_rounds)]
+out_tau = [[0 for _ in range(n)] for _ in range(num_rounds)]
+out_tau2 = [[0 for _ in range(n)] for _ in range(num_rounds)]
 for i in sol:
-    if ('x' in i.Varname) and (i.X > 0):
-        print(i.Varname, '---', i.X)
+    search_x = re.search('^x\[([0-9]*),([0-9]*)\]$', i.varname)
+    search_tau = re.search('^tau\[([0-9]*),([0-9]*)\]$', i.varname)
+    search_tau2 = re.search('^tau2\[([0-9]*),([0-9]*)\]$', i.varname)
+    if search_x and i.x > 0:
+        out_x[int(search_x.group(1))].append(search_x.group(2))
+    if search_tau:
+        out_tau[int(search_tau.group(1))][int(search_tau.group(2))] = i.x
+    if search_tau2:
+        out_tau2[int(search_tau2.group(1))][int(search_tau2.group(2))] = i.x
+
+print('---x-----------------------------')
+for i in out_x:
+    print([int(j) for j in i])
+print('---tau-----------------------------')
+for i in out_tau:
+    print([int(j) for j in i])
+print('---tau2-----------------------------')
+for i in out_tau2:
+    print([int(j) for j in i])
+print('------------------------------------')
+tau2_total = sum([sum(i) for i in out_tau2])
+print('Epsilon:', epsilon)
+print('Total double coverages:', int(tau2_total))
+print('Adjusted objective:', M1.getObjective().getValue()+tau2_total*epsilon)
+# # Model phase 2
+# M2, tau, tau2 = basic_model()
+    
+# # Objective
+# # tau_max = M2.addVars(num_rounds, vtype=gp.GRB.INTEGER)
+# # tau_min = M2.addVars(num_rounds, vtype=gp.GRB.INTEGER)
+# # tau_col = M2.addVars(num_rounds, n, vtype=gp.GRB.INTEGER, name='tau_col')
+# # for i in range(num_rounds):
+# #     for j in range(n):
+# #         M2.addConstr(tau_col[i, j] == gp.quicksum([tau[k, j] for k in range(i+1)]))
+# # for i in range(num_rounds):
+# #     M2.addGenConstrMax(tau_max[i], [tau_col[i, j] for j in range(n)], name='tau_max')
+# #     M2.addGenConstrMin(tau_min[i], [tau_col[i, j] for j in range(n)], name='tau_min')
+# # M2.setObjective(gp.quicksum([tau_max[i]-tau_min[i] for i in range(num_rounds)]), gp.GRB.MINIMIZE)
+# tau_max = M2.addVars(num_rounds, vtype=gp.GRB.INTEGER)
+# tau_min = M2.addVars(num_rounds, vtype=gp.GRB.INTEGER)
+# tau_col = M2.addVars(num_rounds, n, vtype=gp.GRB.INTEGER, name='tau_col')
+# for i in range(num_rounds):
+#     for j in range(n):
+#         M2.addConstr(tau_col[i, j] == gp.quicksum([tau2[k, j] for k in range(i+1)]))
+# for i in range(num_rounds):
+#     M2.addGenConstrMax(tau_max[i], [tau_col[i, j] for j in range(n)], name='tau_max')
+#     M2.addGenConstrMin(tau_min[i], [tau_col[i, j] for j in range(n)], name='tau_min')
+# M2.setObjective(gp.quicksum([tau_max[i]-tau_min[i] for i in range(num_rounds)]), gp.GRB.MINIMIZE)
+
+# # Ensure that the final path leads to the optimal solution
+# M2.addConstr(tau_max[num_rounds-1]-tau_min[num_rounds-1] == phi)
+
+# # Solve
+# M2.update()
+# M2.optimize()
+
+# print('Status:', M2.Status)
+# sol = M2.getVars()
+# for i in sol:
+#     if ('2' in i.Varname):# and (i.X > 0):
+#         print(i.Varname, '---', i.X)
+#     # if ('x' in i.Varname) and (i.X > 0):
+#     #     print(i.Varname, '---', i.X)
