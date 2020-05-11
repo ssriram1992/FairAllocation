@@ -10,11 +10,11 @@ def basic_model():
     M = gp.Model()
     x = M.addVars(num_rounds, len(bases), vtype=gp.GRB.BINARY, name='x')
 
-    # Each round, all ambulances must be assigned
+    # Each round, all ambulances must be assigned.
     for i in range(num_rounds):
         M.addConstr(gp.quicksum(x[i, j] for j in range(len(bases))) == num_ambulances)
 
-    # A configuration must be "efficient", i.e., >=95% of the zones covered
+    # A configuration must be "efficient", i.e., >=95% of the zones covered.
     tau = M.addVars(num_rounds, range(n), vtype=gp.GRB.BINARY, name='tau')
     tau2 = M.addVars(num_rounds, range(n), vtype=gp.GRB.BINARY, name='tau2')
     for i in range(num_rounds):
@@ -32,25 +32,23 @@ def basic_model():
     for i in range(num_rounds):
         M.addConstr(gp.quicksum(tau[i, j] for j in range(n)) >= ceil(0.95*n))
 
-    # Force tau2 to take nonzero values (we assume that a configuration where no one is double covered is improbable). This constraint only ensures that one zone is double covered. It must be used in conjunction with the epsilon value in the objective function which ensures that the number of tau2s in the optimal solution is maximal.
-    #M.addConstr(gp.quicksum([tau2[i, j] for i in range(num_rounds) for j in range(n)]) >= 1)
-
-    # Transition cost: A maximum of max_transition vehicles can be moved when switching between configurations
-    remain = M.addVars(num_rounds-1, range(len(bases)), vtype=gp.GRB.BINARY)
+    # Transition cost: A maximum of max_transition vehicles can be moved when switching between configurations.
+    remain = M.addVars(num_rounds-1, len(bases), vtype=gp.GRB.BINARY)
     for i in range(num_rounds-1):
         for j in range(len(bases)):
             M.addConstr((remain[i, j] == 1) >> ((x[i, j] + x[i+1, j]) >= 2))
+            M.addConstr((remain[i, j] == 0) >> ((x[i, j] + x[i+1, j]) <= 1))
     for i in range(num_rounds-1):
         M.addConstr(gp.quicksum(remain[i, j] for j in range(len(bases))) >= ceil((1-max_transition)*num_ambulances))
         
     return M, tau, tau2
 
 # For efficiency we use the performance target for the Netherlands, i.e.,
-# that "95% of all calls should be reached within 15 minutes".
+# that "95% of all calls should be reached within 15 minutes (900 seconds)".
 utrecht = Utrecht()
 utrecht.reduce_graph(900)
 
-# Bases are the only vertices that can be allocated ambulances
+# Bases are the only vertices that can be allocated ambulances.
 bases = utrecht.B
 n = len(utrecht.V)
 
@@ -64,33 +62,21 @@ for i in range(n):
 adj = adj.astype(int)
 
 # Model parameters
-num_ambulances = 8 #7
-num_rounds = 2 #5
-max_transition = 0.5 #0.25
+num_ambulances = 8
+num_rounds = 5
+max_transition = 0.25
 
 # Model phase 1
 M1, tau, tau2 = basic_model()
     
 # Objective
-# tau_max = M1.addVar(obj=1)
-# tau_min = M1.addVar(obj=-1)
-# tau_col = M1.addVars(range(n), vtype=gp.GRB.INTEGER, name='tau_col')
-# for i in range(n):
-#     M1.addConstr(tau_col[i] == gp.quicksum([tau[j, i] for j in range(num_rounds)]))
-# M1.addGenConstrMax(tau_max, [tau_col[i] for i in range(n)], name='tau_max')
-# M1.addGenConstrMin(tau_min, [tau_col[i] for i in range(n)], name='tau_min')
-
-tau_max = M1.addVar(obj=1)
-tau_min = M1.addVar(obj=-1)
-tau_col = M1.addVars(range(n), vtype=gp.GRB.INTEGER, name='tau_col')
+tau2_max = M1.addVar(obj=1)
+tau2_min = M1.addVar(obj=-1)
+tau2_col = M1.addVars(n, vtype=gp.GRB.INTEGER, name='tau2_col')
 for i in range(n):
-    M1.addConstr(tau_col[i] == gp.quicksum([tau2[j, i] for j in range(num_rounds)]))
-M1.addGenConstrMax(tau_max, [tau_col[i] for i in range(n)], name='tau_max')
-M1.addGenConstrMin(tau_min, [tau_col[i] for i in range(n)], name='tau_min')
-
-epsilon=0.005
-# tau2_epsilon = M1.addVar(obj=-epsilon)
-# M1.addConstr(tau2_epsilon == gp.quicksum([tau2[i, j] for i in range(num_rounds) for j in range(n)]))
+    M1.addConstr(tau2_col[i] == gp.quicksum([tau2[j, i] for j in range(num_rounds)]))
+M1.addGenConstrMax(tau2_max, [tau2_col[i] for i in range(n)], name='tau2_max')
+M1.addGenConstrMin(tau2_min, [tau2_col[i] for i in range(n)], name='tau2_min')
 
 # Solve
 M1.update()
@@ -116,17 +102,16 @@ for i in sol:
 print('---x-----------------------------')
 for i in out_x:
     print([int(j) for j in i])
-print('---tau-----------------------------')
-for i in out_tau:
-    print([int(j) for j in i])
-print('---tau2-----------------------------')
-for i in out_tau2:
-    print([int(j) for j in i])
+# print('---tau-----------------------------')
+# for i in out_tau:
+#     print([int(j) for j in i])
+# print('---tau2-----------------------------')
+# for i in out_tau2:
+#     print([int(j) for j in i])
 print('------------------------------------')
-tau2_total = sum([sum(i) for i in out_tau2])
-print('Epsilon:', epsilon)
-print('Total double coverages:', int(tau2_total))
-print('Adjusted objective:', M1.getObjective().getValue()+tau2_total*epsilon)
+print('Single coverages:', [int(sum(i)) for i in out_tau])
+print('Double coverages:', [int(sum(i)) for i in out_tau2])
+
 # # Model phase 2
 # M2, tau, tau2 = basic_model()
     
