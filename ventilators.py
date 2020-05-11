@@ -149,12 +149,25 @@ def plotState(loc):
     fig = plt.figure()
     ax = fig.add_axes([0, 0, 1.2, 1.2])
     ax.plot(xval, yval, 'bo--')
-    ax. plot(xval, [Q[loc][t] for t in range(T)], 'rs--')
+    ax.plot(xval, [Q[loc][t] for t in range(T)], 'rs--')
     ax.legend(labels = ('Quantity supplied', 'Quantity demanded'), loc = 'upper right')
     ax.set_title("State "+str(loc))
     ax.set_xlabel('Day')
     ax.set_ylabel('Number of ventilators')
     plt.show()
+
+def plot_philippe(loc):
+    """For some reason, plotState() doesn't render well for me."""
+    xval = [t for t in range(T)]
+    yval = [x[loc, t].X for t in range(T)]
+    fig, ax = plt.subplots()
+    ax.plot(xval, yval, 'bo--')
+    ax.plot(xval, [Q[loc][t] for t in range(T)], 'rs--')
+    ax.set(xlabel='Day', ylabel='Number of ventilators', title='State'+str(loc))
+    ax.grid()
+    ax.legend(labels=('Quantity supplied', 'Quantity demanded'), loc = 'upper right')
+    plt.show()
     
 for loc in range(50):
-    plotState(loc)
+    plot_philippe(loc)
+    # plotState(loc)
