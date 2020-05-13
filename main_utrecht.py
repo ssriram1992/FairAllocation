@@ -50,6 +50,7 @@ utrecht.reduce_graph(900)
 
 # Bases are the only vertices that can be allocated ambulances.
 bases = utrecht.B
+# bases = [i for i in range(0, 217, 4)] # TEMP: playing with numbers.
 n = len(utrecht.V)
 
 # Replace the seconds by a boolean representing if the zones are close enough
@@ -64,53 +65,85 @@ adj = adj.astype(int)
 # Model parameters
 num_ambulances = 8
 num_rounds = 5
-max_transition = 0.25
+max_transition = 1
 
 # Model phase 1
 M1, tau, tau2 = basic_model()
-    
-# Objective
-tau2_max = M1.addVar(obj=1)
-tau2_min = M1.addVar(obj=-1)
+
+# tau2_col[i]: The number of times zone i was double covered over interval T.
 tau2_col = M1.addVars(n, vtype=gp.GRB.INTEGER, name='tau2_col')
 for i in range(n):
     M1.addConstr(tau2_col[i] == gp.quicksum([tau2[j, i] for j in range(num_rounds)]))
-M1.addGenConstrMax(tau2_max, [tau2_col[i] for i in range(n)], name='tau2_max')
-M1.addGenConstrMin(tau2_min, [tau2_col[i] for i in range(n)], name='tau2_min')
+
+# Maximum and minimum values of tau2_col.
+tau2_max = M1.addVar(name='tau2_max')
+tau2_min = M1.addVar(name='tau2_min')
+M1.addGenConstrMax(tau2_max, [tau2_col[i] for i in range(n)])
+M1.addGenConstrMin(tau2_min, [tau2_col[i] for i in range(n)])
+
+# Objectives
+#   - efficiency: Maximize the sum of double coverages.
+#   - difference: Minimize the difference between the minimum and maximum.
+#   - minmax: Minimize the maximum.
+#   - maxmin: Maximize the minimum.
+objective = 'efficiency'
+
+if objective == 'efficiency':
+    efficiency = M1.addVar(obj=-1, name='efficiency')
+    M1.addConstr(efficiency == gp.quicksum(tau2_col))
+elif objective == 'difference':
+    tau2_max.setAttr('obj', 1)
+    tau2_min.setAttr('obj', -1)
+elif objective == 'minmax':
+    tau2_max.setAttr('obj', -1)
+elif objective == 'maxmin':
+    tau2_min.setAttr('obj', -1)
 
 # Solve
 M1.update()
 M1.optimize()
 phi = M1.getObjective().getValue()
 
+print('----------------------------------------')
 print('Status (2 is optimal):', M1.Status)
+print('Objective:', objective)
 sol = M1.getVars()
 out_x = [[] for _ in range(num_rounds)]
 out_tau = [[0 for _ in range(n)] for _ in range(num_rounds)]
 out_tau2 = [[0 for _ in range(n)] for _ in range(num_rounds)]
+out_tau2_max = None
+out_tau2_min = None
 for i in sol:
     search_x = re.search('^x\[([0-9]*),([0-9]*)\]$', i.varname)
     search_tau = re.search('^tau\[([0-9]*),([0-9]*)\]$', i.varname)
     search_tau2 = re.search('^tau2\[([0-9]*),([0-9]*)\]$', i.varname)
+    search_tau2_max = re.search('^tau2_max$', i.varname)
+    search_tau2_min = re.search('^tau2_min$', i.varname)
     if search_x and i.x > 0:
         out_x[int(search_x.group(1))].append(search_x.group(2))
     if search_tau:
         out_tau[int(search_tau.group(1))][int(search_tau.group(2))] = i.x
     if search_tau2:
         out_tau2[int(search_tau2.group(1))][int(search_tau2.group(2))] = i.x
+    if search_tau2_max:
+        out_tau2_max = i.x
+    if search_tau2_min:
+        out_tau2_min = i.x
 
-print('---x-----------------------------')
+print('-----x----------------------------------')
 for i in out_x:
     print([int(j) for j in i])
-# print('---tau-----------------------------')
+# print('-----tau--------------------------------')
 # for i in out_tau:
 #     print([int(j) for j in i])
-# print('---tau2-----------------------------')
+# print('-----tau2-------------------------------')
 # for i in out_tau2:
 #     print([int(j) for j in i])
-print('------------------------------------')
+print('----------------------------------------')
 print('Single coverages:', [int(sum(i)) for i in out_tau])
 print('Double coverages:', [int(sum(i)) for i in out_tau2])
+print('tau2_max:', out_tau2_max)
+print('tau2_min:', out_tau2_min)
 
 # # Model phase 2
 # M2, tau, tau2 = basic_model()
