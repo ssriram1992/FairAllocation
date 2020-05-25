@@ -50,6 +50,9 @@ x = M.addVars(n, T, lb=0, vtype=gp.GRB.INTEGER, name='x')
 
 # N[t]: Number of ventilators injected into the system at time t.
 # The lower bound forces at least most of the ventilators to be used.
+# TODO: What if we force ALL ventilators to be used? Since we ship the same
+#       number of ventilators every day anyway, currently they are "lost" if we
+#       don't send them anywhere.
 N = M.addVars(T, lb=0.9*N_max, ub=N_max, vtype=gp.GRB.INTEGER, name='N')
 
 # z[i, t]: How many of the new ventilators N[t] are sent to location i at time t.

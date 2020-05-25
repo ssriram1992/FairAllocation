@@ -67,6 +67,13 @@ num_ambulances = 8
 num_rounds = 5
 max_transition = 1
 
+# Objective
+#   - efficiency: Maximize the sum of double coverages.
+#   - difference: Minimize the difference between the minimum and maximum.
+#   - minmax: Minimize the maximum.
+#   - maxmin: Maximize the minimum.
+objective = 'efficiency'
+
 # Model phase 1
 M1, tau, tau2 = basic_model()
 
@@ -80,13 +87,6 @@ tau2_max = M1.addVar(name='tau2_max')
 tau2_min = M1.addVar(name='tau2_min')
 M1.addGenConstrMax(tau2_max, [tau2_col[i] for i in range(n)])
 M1.addGenConstrMin(tau2_min, [tau2_col[i] for i in range(n)])
-
-# Objectives
-#   - efficiency: Maximize the sum of double coverages.
-#   - difference: Minimize the difference between the minimum and maximum.
-#   - minmax: Minimize the maximum.
-#   - maxmin: Maximize the minimum.
-objective = 'efficiency'
 
 if objective == 'efficiency':
     efficiency = M1.addVar(obj=-1, name='efficiency')
