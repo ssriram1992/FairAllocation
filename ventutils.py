@@ -99,6 +99,19 @@ def initial_supply():
     return [x[1] for x in data]
 
 
+def state_population():
+    """ Get the population of each state.
+
+    Returns:
+      A list of the population of each state,
+      indexed in alphabetical order.
+    """
+    with open('data/bertsimas/initial_supply.csv', 'r') as f:
+        data = [[x[0].strip('"\n'), int(x[3].strip('\n'))] for x in
+                [y.split(',') for y in f.readlines()[1:]]]
+    f.close()
+    data.sort(key=lambda entry: entry[0])
+    return [x[1] for x in data]
 
 
 

@@ -27,6 +27,7 @@ def greedy_iter(n,
                 N_past,
                 z_past,
                 f_past,
+                tau_pos_past,
                 phi_past):
     """Performs an iteration of greedy algorithm between."""
     
@@ -127,29 +128,33 @@ def greedy_iter(n,
             M_greedy.addConstr(x[i, t] >= eqn)
 
     # Objective
-    # 17:30 normalization considering the phi, instead of considering the shortage, we consider the percentage of unfulfilled demand
-    # 20:55
+    # 'discrepancy': Minimize the difference of shortages between the location with the most shortages and the location with the least shortages.
+    # 'weighted_discrepancy': Minimize the difference of weighted shortages, i.e., same as 'discrepancy' by the shortages are divided by the population of the location.
+    # 'percentage_unfulfilled': Minimize the difference of the percentage of unfulfilled demand between the location with the highest percentage of unfulfilled demand and the location with the lowest percentage of unfulfilled demand.
+    objective = 'percentage_unfulfilled'
     
-#     # Minimizing final disparity
-#     phi_max = M_greedy.addVar(lb=0, vtype=gp.GRB.INTEGER, name='phi_max')
-#     phi_min = M_greedy.addVar(lb=0,vtype=gp.GRB.INTEGER, name="phi_min")
-#     phi_ = M_greedy.addVars(n, lb=0, vtype=gp.GRB.INTEGER, name='phi_')
-#     for i in range(n):
-#         M_greedy.addConstr(phi_[i] == phi_past[i] + gp.quicksum(tau_pos[i, t] for t in T_))
-#     M_greedy.addGenConstrMin(phi_min, phi_)
-#     M_greedy.addGenConstrMax(phi_max, phi_)
-#     M_greedy.setObjective(phi_max-phi_min)
-    # Minimizing day wise disparity
-
     # phi_[i, t]: Sum of the shortages in location i from the beginning up to time t.
-    phi_ = M_greedy.addVars(n, T_, lb=0, vtype=gp.GRB.INTEGER, name='phi_')
+    if (objective == 'discrepancy'):
+        phi_ = M_greedy.addVars(n, T_, lb=0, vtype=gp.GRB.INTEGER, name='phi_')
+    elif (objective == 'weighted_discrepancy') or (objective == 'percentage_unfulfilled'):
+        phi_ = M_greedy.addVars(n, T_, lb=0, vtype=gp.GRB.CONTINUOUS, name='phi_')
     for tt in T_:
         for i in range(n):
-            M_greedy.addConstr(phi_[i, tt] == phi_past[i] + gp.quicksum(tau_pos[i, t] for t in T_ if t <= tt))
+            if (objective == 'discrepancy'):
+                M_greedy.addConstr(phi_[i, tt] == phi_past[i] + gp.quicksum(tau_pos[i, t] for t in T_ if t <= tt))
+            elif (objective == 'weighted_discrepancy'):
+                population = ventutils.state_population()
+                M_greedy.addConstr(phi_[i, tt] == (phi_past[i] + gp.quicksum(tau_pos[i, t] for t in T_ if t <= tt)/population[i]))
+            elif (objective == 'percentage_unfulfilled'):
+                M_greedy.addConstr(phi_[i, tt] == (gp.quicksum(tau_pos_past[i, t] for t in range(0, time_start)) + gp.quicksum(tau_pos[i, t] for t in T_ if t <= tt))/sum(Q[i][:tt+1]))
 
     # phi_max/min[t]: max/min phi of all locations on time t.
-    phi_max = M_greedy.addVars(T_, lb=0, obj=1, vtype=gp.GRB.INTEGER, name='phi_max')
-    phi_min = M_greedy.addVars(T_, lb=0, obj=-1, vtype=gp.GRB.INTEGER, name="phi_min")    
+    if (objective == 'discrepancy'):
+        phi_max = M_greedy.addVars(T_, lb=0, obj=1, vtype=gp.GRB.INTEGER, name='phi_max')
+        phi_min = M_greedy.addVars(T_, lb=0, obj=-1, vtype=gp.GRB.INTEGER, name="phi_min")
+    elif (objective == 'weighted_discrepancy') or (objective == 'percentage_unfulfilled'):
+        phi_max = M_greedy.addVars(T_, lb=0, obj=1, vtype=gp.GRB.CONTINUOUS, name='phi_max')
+        phi_min = M_greedy.addVars(T_, lb=0, obj=-1, vtype=gp.GRB.CONTINUOUS, name="phi_min")
     for tt in T_:
         M_greedy.addGenConstrMin(phi_min[tt], [phi_[i,tt] for i in range(n)])
         M_greedy.addGenConstrMax(phi_max[tt], [phi_[i,tt] for i in range(n)])
@@ -159,7 +164,7 @@ def greedy_iter(n,
     M_greedy.params.Threads = 2
     M_greedy.optimize()
     
-    return M_greedy, x, N, z, f, phi_
+    return M_greedy, x, N, z, f, tau_pos, phi_
 
 
 ########
@@ -210,47 +215,45 @@ x_past = {}
 N_past = {}
 z_past = {}
 f_past = {}
+tau_pos_past = {}
 phi_past = {i:0 for i in range(n)}
 
-# # Initial RTH interval. (might be needed for taupast, etc)
-# time_start = 0
-# time_end = period
-
-# phi_past = {(i,t):0 for (i,t) in itertools.product(range(n),range(0,time_start))}
-# taupast = {(i,t):0 for (i,t) in itertools.product(range(n),range(0,time_start))}
-# tau_pos_past = {(i,t):0 for (i,t) in itertools.product(range(n),range(0,time_start))}
-
+# Note: This rolling time horizon considers intervals 1-5, 6-10, etc, and not 1-5, 2-6, etc.
 for time in range(0, T, period):
     # Current RTH interval.
     time_start = time
     time_end = min(time+period, T)
 
     # Solve one greedy iteration.
-    M_greedy, x, N, z, f, phi = greedy_iter(n,
-                                            time_start,
-                                            time_end,
-                                            V,
-                                            Q,
-                                            D,
-                                            N_max,
-                                            eff,
-                                            R,
-                                            x_past,
-                                            N_past,
-                                            z_past,
-                                            f_past,
-                                            phi_past)
+    M_greedy, x, N, z, f, tau_pos, phi = greedy_iter(n,
+                                                     time_start,
+                                                     time_end,
+                                                     V,
+                                                     Q,
+                                                     D,
+                                                     N_max,
+                                                     eff,
+                                                     R,
+                                                     x_past,
+                                                     N_past,
+                                                     z_past,
+                                                     f_past,
+                                                     tau_pos_past,
+                                                     phi_past)
 
     # Save the results of the current RTH interval's solution.
     for t in range(time_start, time_end):
         for i in range(n):
             x_past[(i, t)] = x[i, t].X
             z_past[(i, t)] = z[i, t].X
+            tau_pos_past[(i, t)] = tau_pos[i, t].X
             for j in range(n):
                 f_past[(i, j, t)] = f[i, j, t].X
         N_past[t] = N[t].X
     for i in range(n):
         phi_past[i] = phi[i, time_end-1].X
 
-
-print(phi_past)
+print('-------------------------------------------------')
+print('phi min:', phi_past[min(phi_past.keys(), key=(lambda k: phi_past[k]))])
+print('phi max:', phi_past[max(phi_past.keys(), key=(lambda k: phi_past[k]))])
+#print(tau_pos_past)
