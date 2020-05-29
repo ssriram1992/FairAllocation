@@ -215,17 +215,3 @@ def greedyIter(n, tStart, tEnd, V, Q, D, N_max, R, xpast = None, Npast= None, zp
     Mgreed.optimize()
     ###
     return Mgreed, x,N,z, f, phi_
-                          
-                          
-                          
-                          
-                          
-                          
-                          
-                          
-                          
-                          
-                          
-                          
-                          
-                          
