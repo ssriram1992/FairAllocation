@@ -3,6 +3,27 @@ import gurobipy as gp
 import numpy as np
 import ventutils
 
+def discrepancy_value(tau_pos_past):
+    tau_pos_max = max(sum(tau_pos_past[(i, t)] for t in range(T)) for i in range(n))
+    tau_pos_min = min(sum(tau_pos_past[(i, t)] for t in range(T)) for i in range(n))
+    print('--- Discrepancy ----------------------------------------------')
+    print(f"{tau_pos_max} - {tau_pos_min} = {tau_pos_max-tau_pos_min}")
+
+    
+def weighted_discrepancy_value(tau_pos_past):
+    population = ventutils.state_population()
+    tau_pos_max = max(sum(tau_pos_past[(i, t)] for t in range(T))/population[i] for i in range(n))
+    tau_pos_min = min(sum(tau_pos_past[(i, t)] for t in range(T))/population[i] for i in range(n))
+    print('--- Weighted discrepancy ----------------------------------------------')
+    print(f"{tau_pos_max} - {tau_pos_min} = {tau_pos_max-tau_pos_min}")
+
+def percentage_unfulfilled_value(tau_pos_past):
+    total_demand = [sum(Q[i, t] for t in range(T)) for i in range(n)]
+    tau_pos_max = max(sum(tau_pos_past[(i, t)] for t in range(T))/total_demand[i] for i in range(n))
+    tau_pos_min = min(sum(tau_pos_past[(i, t)] for t in range(T))/total_demand[i] for i in range(n))
+    print('--- Percentage unfulfilled ----------------------------------------------')
+    print(f"{tau_pos_max} - {tau_pos_min} = {tau_pos_max-tau_pos_min} (~{round(tau_pos_max-tau_pos_min, 2)*100}%)")
+    
 
 def printVars(z, string = "", tol = 1e-7):
     for zz in z:
@@ -14,7 +35,8 @@ def printParams(z, string = "", tol = 1e-7):
         if abs(z[zz]) >= tol :
             print(string,zz,"----", z[zz])
 
-def greedy_iter(n,
+def greedy_iter(objective,
+                n,
                 time_start,
                 time_end,
                 V,
@@ -126,12 +148,6 @@ def greedy_iter(n,
                 else:
                     eqn += z_past[i, tp] + sum([f_past[j, i, tp-D[j][i]] for j in range(n) if tp-D[j][i] >= 0])
             M_greedy.addConstr(x[i, t] >= eqn)
-
-    # Objective
-    # 'discrepancy': Minimize the difference of shortages between the location with the most shortages and the location with the least shortages.
-    # 'weighted_discrepancy': Minimize the difference of weighted shortages, i.e., same as 'discrepancy' by the shortages are divided by the population of the location.
-    # 'percentage_unfulfilled': Minimize the difference of the percentage of unfulfilled demand between the location with the highest percentage of unfulfilled demand and the location with the lowest percentage of unfulfilled demand.
-    objective = 'percentage_unfulfilled'
     
     # phi_[i, t]: Sum of the shortages in location i from the beginning up to time t.
     if (objective == 'discrepancy'):
@@ -205,6 +221,12 @@ eff = 0.9
 # Length of a rolling time horizon (RTH) interval.
 period = 5
 
+# Objective
+# 'discrepancy': Minimize the difference of shortages between the location with the most shortages and the location with the least shortages.
+# 'weighted_discrepancy': Minimize the difference of weighted shortages, i.e., same as 'discrepancy' by the shortages are divided by the population of the location.
+# 'percentage_unfulfilled': Minimize the difference of the percentage of unfulfilled demand between the location with the highest percentage of unfulfilled demand and the location with the lowest percentage of unfulfilled demand.
+objective = 'discrepancy'
+
 
 #####################
 # GREEDY ITERATIONS #
@@ -225,7 +247,8 @@ for time in range(0, T, period):
     time_end = min(time+period, T)
 
     # Solve one greedy iteration.
-    M_greedy, x, N, z, f, tau_pos, phi = greedy_iter(n,
+    M_greedy, x, N, z, f, tau_pos, phi = greedy_iter(objective,
+                                                     n,
                                                      time_start,
                                                      time_end,
                                                      V,
@@ -253,7 +276,7 @@ for time in range(0, T, period):
     for i in range(n):
         phi_past[i] = phi[i, time_end-1].X
 
-print('-------------------------------------------------')
-print('phi min:', phi_past[min(phi_past.keys(), key=(lambda k: phi_past[k]))])
-print('phi max:', phi_past[max(phi_past.keys(), key=(lambda k: phi_past[k]))])
-#print(tau_pos_past)
+print('Optimized with objective:', objective)
+discrepancy_value(tau_pos_past)
+weighted_discrepancy_value(tau_pos_past)
+percentage_unfulfilled_value(tau_pos_past)
