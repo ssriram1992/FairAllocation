@@ -2,6 +2,7 @@ from gurobipy import *
 import gurobipy as gp
 import numpy as np
 import ventutils
+import time
 
 def discrepancy_value(tau_pos_past):
     tau_pos_max = max(sum(tau_pos_past[(i, t)] for t in range(T)) for i in range(n))
@@ -35,7 +36,9 @@ def printParams(z, string = "", tol = 1e-7):
         if abs(z[zz]) >= tol :
             print(string,zz,"----", z[zz])
 
-def greedy_iter(objective,
+def greedy_iter(gap,
+                time_limit,
+                objective,
                 n,
                 time_start,
                 time_end,
@@ -174,8 +177,10 @@ def greedy_iter(objective,
     for tt in T_:
         M_greedy.addGenConstrMin(phi_min[tt], [phi_[i,tt] for i in range(n)])
         M_greedy.addGenConstrMax(phi_max[tt], [phi_[i,tt] for i in range(n)])
-
+        
     # Solve.
+    M_greedy.Params.MIPGap = gap
+    M_greedy.Params.TimeLimit = time_limit
     M_greedy.update()
     M_greedy.params.Threads = 2
     M_greedy.optimize()
@@ -221,16 +226,25 @@ eff = 0.9
 # Length of a rolling time horizon (RTH) interval.
 period = 5
 
+# Relative gap.
+gap = 0.1
+
+# Time limit, per greedy iteration (seconds).
+tl = 20
+
 # Objective
 # 'discrepancy': Minimize the difference of shortages between the location with the most shortages and the location with the least shortages.
 # 'weighted_discrepancy': Minimize the difference of weighted shortages, i.e., same as 'discrepancy' by the shortages are divided by the population of the location.
 # 'percentage_unfulfilled': Minimize the difference of the percentage of unfulfilled demand between the location with the highest percentage of unfulfilled demand and the location with the lowest percentage of unfulfilled demand.
-objective = 'discrepancy'
+objective = 'percentage_unfulfilled'
 
 
 #####################
 # GREEDY ITERATIONS #
 #####################
+
+# Timer.
+start_time = time.time()
 
 # Values of the variables in past RTH intervals.
 x_past = {}
@@ -241,13 +255,15 @@ tau_pos_past = {}
 phi_past = {i:0 for i in range(n)}
 
 # Note: This rolling time horizon considers intervals 1-5, 6-10, etc, and not 1-5, 2-6, etc.
-for time in range(0, T, period):
+for time2 in range(0, T, period):
     # Current RTH interval.
-    time_start = time
-    time_end = min(time+period, T)
+    time_start = time2
+    time_end = min(time2+period, T)
 
     # Solve one greedy iteration.
-    M_greedy, x, N, z, f, tau_pos, phi = greedy_iter(objective,
+    M_greedy, x, N, z, f, tau_pos, phi = greedy_iter(gap,
+                                                     tl,
+                                                     objective,
                                                      n,
                                                      time_start,
                                                      time_end,
@@ -280,3 +296,4 @@ print('Optimized with objective:', objective)
 discrepancy_value(tau_pos_past)
 weighted_discrepancy_value(tau_pos_past)
 percentage_unfulfilled_value(tau_pos_past)
+print('Total time elapsed:', time.time()-start_time)
