@@ -79,17 +79,18 @@ def pop(x):
 sufficient = [x for x in map(pop, pop_density)]
 
 # Model parameters
-num_ambulances = 17
-num_rounds = 5
+num_ambulances = 10
+num_rounds = 2
 max_transition = 1 # 0 = no transition allowed, 1 = unlimited transitions
-min_sufficient = 0.95 # 0 = no one needs to be covered, 1 = everyone has to be covered
+min_sufficient = 0 # 0 = no one needs to be covered, 1 = everyone has to be covered
 
 # Objective (coverage = sufficient coverage)
 #   - efficiency: Maximize the sum of coverages.
 #   - difference: Minimize the difference between the zone the most often covered, and the zone the least often covered.
 #   - minmax: Minimize the coverage of the zone the most covered.
 #   - maxmin: Maximize the coverage of the zone the least covered.
-objective = 'minmax'
+#   - min_uncovered: Minimize the number of zones which are never covered.
+objective = 'min_uncovered'
 
 # Model
 mainM, tau = basic_model()
@@ -115,7 +116,14 @@ elif objective == 'minmax':
     tau_max.setAttr('obj', -1)
 elif objective == 'maxmin':
     tau_min.setAttr('obj', -1)
-
+elif objective == 'min_uncovered':
+    uncovered = mainM.addVars(n, vtype=gp.GRB.BINARY, name='uncovered')
+    for i in range(n):
+        mainM.addConstr((uncovered[i] == 1) >> (tau_col[i] == 0))
+        mainM.addConstr((uncovered[i] == 0) >> (tau_col[i] >= 1))
+    sum_uncovered = mainM.addVar(obj=1, name='sum_uncovered')
+    mainM.addConstr(sum_uncovered == gp.quicksum(uncovered))
+    
 # Solve
 mainM.update()
 mainM.optimize()
