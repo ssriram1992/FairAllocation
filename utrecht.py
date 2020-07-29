@@ -61,3 +61,6 @@ class Utrecht:
         for i in self.E:
             if i[2] > seconds:
                 self.G.remove_edge(i[0], i[1])
+
+    def get_population_densities(self):
+        return [x[1] for x in self.V]
