@@ -79,10 +79,10 @@ def pop(x):
 sufficient = [x for x in map(pop, pop_density)]
 
 # Model parameters
-num_ambulances = 10
-num_rounds = 2
-max_transition = 1 # 0 = no transition allowed, 1 = unlimited transitions
-min_sufficient = 0 # 0 = no one needs to be covered, 1 = everyone has to be covered
+num_ambulances = 17
+num_rounds = 5
+max_transition = 0.5 # 0 = no transition allowed, 1 = unlimited transitions
+min_sufficient = 0.95 # 0 = no one needs to be covered, 1 = everyone has to be covered
 
 # Objective (coverage = sufficient coverage)
 #   - efficiency: Maximize the sum of coverages.
