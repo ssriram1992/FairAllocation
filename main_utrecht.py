@@ -8,6 +8,8 @@ from utrecht import *
 
 def basic_model():
     M = gp.Model()
+
+    # x[i, j]: Number of ambulances allocated to base j on round i
     x = M.addVars(num_rounds, len(bases), vtype=gp.GRB.INTEGER, lb=0, name='x')
 
     # Each round, all ambulances must be assigned.
@@ -29,7 +31,9 @@ def basic_model():
         M.addConstr(gp.quicksum(tau[i, j] for j in range(n)) >= ceil(min_sufficient*n))
 
     # Transition cost: A maximum of max_transition vehicles can be moved when switching between configurations.
-    delta = M.addVars(num_rounds-1, len(bases), vtype=gp.GRB.INTEGER)
+    # delta[i, j]: Difference in the number of ambulances in zone j between rounds i and i+1
+    delta = M.addVars(num_rounds-1, len(bases), lb=-gp.GRB.INFINITY, vtype=gp.GRB.INTEGER)
+    # delta_abs[i, j]: Same as delta, but absolute value of the difference
     delta_abs = M.addVars(num_rounds-1, len(bases), lb=0, vtype=gp.GRB.INTEGER)
     for i in range(num_rounds-1):
         for j in range(len(bases)):
@@ -79,8 +83,8 @@ def pop(x):
 sufficient = [x for x in map(pop, pop_density)]
 
 # Model parameters
-num_ambulances = 17
-num_rounds = 5
+num_ambulances = 20
+num_rounds = 1
 max_transition = 0.5 # 0 = no transition allowed, 1 = unlimited transitions
 min_sufficient = 0.95 # 0 = no one needs to be covered, 1 = everyone has to be covered
 
@@ -90,7 +94,7 @@ min_sufficient = 0.95 # 0 = no one needs to be covered, 1 = everyone has to be c
 #   - minmax: Minimize the coverage of the zone the most covered.
 #   - maxmin: Maximize the coverage of the zone the least covered.
 #   - min_uncovered: Minimize the number of zones which are never covered.
-objective = 'min_uncovered'
+objective = 'maxmin'
 
 # Model
 mainM, tau = basic_model()
@@ -157,12 +161,9 @@ for i in out_x:
         print(j[0]+'('+str(int(j[1]))+') ', end='')
     print()
         #print([int(j) for j in i])
-# print('-----tau--------------------------------')
-# for i in out_tau:
-#     print([int(j) for j in i])
-# print('-----tau2-------------------------------')
-# for i in out_tau2:
-#     print([int(j) for j in i])
+print('-----tau--------------------------------')
+for i in out_tau:
+    print([int(j) for j in i])
 print('----------------------------------------')
 print('Sufficient coverages:', [int(sum(i)) for i in out_tau])
 print('tau_max:', out_tau_max)
