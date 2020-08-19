@@ -33,18 +33,18 @@ def basic_model():
         M.addConstr(gp.quicksum(tau[i, j] for j in range(n)) >= ceil(min_sufficient*n))
 
     # =============>> GCG: We don't consider the transition cost.
-    # # Transition cost: A maximum of max_transition vehicles can be moved when switching between configurations.
-    # # delta[i, j]: Difference in the number of ambulances in zone j between rounds i and i+1
-    # delta = M.addVars(num_rounds-1, len(bases), lb=-gp.GRB.INFINITY, vtype=gp.GRB.INTEGER)
-    # # delta_abs[i, j]: Same as delta, but absolute value of the difference
-    # delta_abs = M.addVars(num_rounds-1, len(bases), lb=0, vtype=gp.GRB.INTEGER)
-    # for i in range(num_rounds-1):
-    #     for j in range(len(bases)):
-    #         M.addConstr(delta[i, j] == (x[i, j] - x[i+1, j]))
-    #         M.addGenConstrAbs(delta_abs[i, j], delta[i, j])
-    # for i in range(num_rounds-1):
-    #     # /2 because if A sends an ambulance to B, only one ambulance has moved, but A and B both show a delta of 1 (1+1=2, so we need to divide by 2)
-    #     M.addConstr(gp.quicksum(delta_abs[i, j] for j in range(len(bases)))/2 <= floor(max_transition*num_ambulances))
+    # Transition cost: A maximum of max_transition vehicles can be moved when switching between configurations.
+    # delta[i, j]: Difference in the number of ambulances in zone j between rounds i and i+1
+    delta = M.addVars(num_rounds-1, len(bases), lb=-gp.GRB.INFINITY, vtype=gp.GRB.INTEGER)
+    # delta_abs[i, j]: Same as delta, but absolute value of the difference
+    delta_abs = M.addVars(num_rounds-1, len(bases), lb=0, vtype=gp.GRB.INTEGER)
+    for i in range(num_rounds-1):
+        for j in range(len(bases)):
+            M.addConstr(delta[i, j] == (x[i, j] - x[i+1, j]))
+            M.addGenConstrAbs(delta_abs[i, j], delta[i, j])
+    for i in range(num_rounds-1):
+        # /2 because if A sends an ambulance to B, only one ambulance has moved, but A and B both show a delta of 1 (1+1=2, so we need to divide by 2)
+        M.addConstr(gp.quicksum(delta_abs[i, j] for j in range(len(bases)))/2 <= floor(max_transition*num_ambulances))
         
     return M, tau
 
@@ -87,7 +87,7 @@ sufficient = [x for x in map(pop, pop_density)]
 
 # Model parameters
 num_ambulances = 20
-num_rounds = 2
+num_rounds = 3
 max_transition = 0.5 # 0 = no transition allowed, 1 = unlimited transitions
 min_sufficient = 0.95 # 0 = no one needs to be covered, 1 = everyone has to be covered
 
@@ -135,7 +135,7 @@ elif objective == 'min_uncovered':
     mainM.addConstr(sum_uncovered == gp.quicksum(uncovered))
 
     
-mainM.write("ambulances.lp")
+mainM.write("ambulances.mps")
 # =============>> GCG: The file 'ambulances.lp' DOES NOT work directly with GCG. It must be formatted with the following Emacs function:
 """
 (defun gcg-lp ()
