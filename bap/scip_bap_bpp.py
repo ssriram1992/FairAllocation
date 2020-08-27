@@ -137,7 +137,7 @@ def cuttingstock():
         numWidthsPerRoll = float(int(rollLength/widths[i]))
         
         # The modifiable flag must be set to True (this tells the msater problem that the pricing problem will automatically modify these constraints to take into account newly generated columns)
-        # Note: What does the separate flag do?
+        # The separate=False flag is because: "In most cases you should deactivate separators since cutting planes that are added to your master problem may destroy your pricing problem", see https://www.scipopt.org/doc/html/FAQ.php
         demandCons.append(s.addCons(numWidthsPerRoll*cutPatternVars[i] >= demand[i], separate = False, modifiable = True))
         # Initial columns: Patterns
         newPattern = [0]*len(widths)

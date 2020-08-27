@@ -131,9 +131,9 @@ sufficient = [x for x in map(pop, pop_density)]
 
 # Model parameters
 num_ambulances = 20
-num_rounds = 7
+num_rounds = 3
 max_transition = 1 # 0 = no transition allowed, 1 = unlimited transitions
-min_coverage = 0 # 0 = no one needs to be covered, 1 = everyone has to be covered
+min_coverage = 0.95 # 0 = no one needs to be covered, 1 = everyone has to be covered
 
 # Objective (coverage = sufficient coverage)
 #   - efficiency: Maximize the sum of coverages.
@@ -141,7 +141,7 @@ min_coverage = 0 # 0 = no one needs to be covered, 1 = everyone has to be covere
 #   - minmax: Minimize the coverage of the zone the most covered.
 #   - maxmin: Maximize the coverage of the zone the least covered.
 #   - min_uncovered: Minimize the number of zones which are never covered.
-objective = 'min_uncovered'
+objective = 'maxmin'
 
 def tau_adjuster(x):
     """Returns an array of tau adjustments for the x array in input."""
