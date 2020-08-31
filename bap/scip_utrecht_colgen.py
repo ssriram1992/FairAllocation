@@ -107,7 +107,11 @@ class AmbulancePricer(Pricer):
                 coeff = round(pp.getVal(u_vars[i]))
                 newAllocation.append(coeff)
             print('==========>>>', newAllocation)
-                
+
+            if newAllocation in self.data['allocations']:
+                print('==========>>> Allocation already exists!')
+                exit()
+            
             # Storing the new variable in the pricer data.
             self.data['coverages'].append(newPattern)
             self.data['allocations'].append(newAllocation)
