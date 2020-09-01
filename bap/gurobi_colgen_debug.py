@@ -88,11 +88,11 @@ while True:
     
     mp.update()
     mp.optimize()
-    print('==========>>> MP objective:', mp.getObjective().getValue())
+#     print('==========>>> MP objective:', mp.getObjective().getValue())
     duals = [mp.getConstrByName(c).Pi for c in ['phi'+str(i) for i in range(n)]]
-    print('==========>>> Duals:', [i for i in duals if i != 0])
+#     print('==========>>> Duals:', [i for i in duals if i != 0])
     mu = mp.getConstrByName('time').Pi
-    print('==========>>> mu:', mu)
+#     print('==========>>> mu:', mu)
 
 
     ##### PRICING PROBLEM
@@ -118,7 +118,12 @@ while True:
     pp.setObjective(gp.quicksum(c_vars[i]*duals[i] for i in range(n)), gp.GRB.MINIMIZE)
     pp.update()
     pp.optimize()
-    print('==========>>> PP objective:', pp.getObjective().getValue())
+#     print('==========>>> PP objective:', pp.getObjective().getValue())
+    violation = - (pp.getObjective().getValue() + mu)
+    print('=============>>> Dual constraint violation: ',violation)
+    if violation < EPS:
+        print("Violation of Dual constraint (11b) is very small. ")
+    
 
     # Get the newly generated allocation and coverage
     cov = [int(pp.getVarByName('c'+str(i)).X) for i in range(n)]
@@ -126,7 +131,7 @@ while True:
     if alloc in allocations:
         print('==========>>> Generation of an already existing column. Exiting.')
         break
-    print('==========>>> Adding new column')
+#     print('==========>>> Adding new column')
     coverages.append(cov)
     allocations.append(alloc)
     print()
