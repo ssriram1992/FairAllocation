@@ -24,8 +24,8 @@ sufficient = utrecht.get_sufficient_coverage()
 
 # Model parameters
 num_ambulances = 20
-num_rounds = 30
-max_transition = 0.25 # 0 = no transition allowed, 1 = unlimited transitions
+num_rounds = 196
+max_transition = 0.2 # 0 = no transition allowed, 1 = unlimited transitions
 min_coverage = 0.95 # 0 = no one needs to be covered, 1 = everyone has to be covered
 max_practical_ambulances = 4 # Maximum practical number of ambulances in a zone (doesn't seem to make much of a difference). This is 4 because a base with 4 ambulances can sufficiently cover any zone no matter what its population density
 
@@ -93,7 +93,7 @@ while True:
     if optimal:
         x_res = [(i, mp.getVarByName('x['+str(i)+']').X) for i in range(len(allocations))]
         x_res = [i for i in x_res if i[1] > 0]
-        # Check if the graph is connected (considering that the optimal solution contains only a few variables used many times each, we can reasonably assume that if the graph is connected, then a Hamiltonian path exists)
+        # If the graph is connected, and that the value of the variable which is used the least is used at least as much as the number of vertices-2, then a Hamiltonian path must exist.
         V = [i[0] for i in x_res]
         E = []
         for i in range(len(V)-1):
@@ -113,7 +113,7 @@ while True:
             print('Root node is integer optimal')
         else:
             print('Root node IS NOT integer optimal')
-        if networkx.is_connected(G):
+        if networkx.is_connected(G) and min([i[1] for i in x_res]) >= len(V)-2:
             print('Hamiltonian path exists')
         else:
             print('Hamiltonian path DOES NOT exist!')
