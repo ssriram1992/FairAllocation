@@ -24,10 +24,120 @@ sufficient = utrecht.get_sufficient_coverage()
 
 # Model parameters
 num_ambulances = 20
-num_rounds = 196
-max_transition = 0.2 # 0 = no transition allowed, 1 = unlimited transitions
+num_rounds = 30
+max_transition = 0.5 # 0 = no transition allowed, 1 = unlimited transitions
 min_coverage = 0.95 # 0 = no one needs to be covered, 1 = everyone has to be covered
 max_practical_ambulances = 4 # Maximum practical number of ambulances in a zone (doesn't seem to make much of a difference). This is 4 because a base with 4 ambulances can sufficiently cover any zone no matter what its population density
+
+
+
+from itertools import combinations
+def subtourelim(model, where):
+    if where == gp.GRB.Callback.MIPSOL:
+        # make a list of edges selected in the solution
+        vals = model.cbGetSolution(model._vars)
+        selected = gp.tuplelist((i, j) for i, j in model._vars.keys()
+                                if vals[i, j] > 0.5)
+        # find the shortest cycle in the selected edge list
+        tour = subtour(selected)
+        if len(tour) < n:
+            # add subtour elimination constr. for every pair of cities in tour
+            model.cbLazy(gp.quicksum(model._vars[i, j]
+                                     for i, j in combinations(tour, 2))
+                         <= len(tour)-1)
+
+
+# Given a tuplelist of edges, find the shortest subtour
+
+def subtour(edges):
+    unvisited = list(range(n))
+    cycle = range(n+1)  # initial length has 1 more city
+    while unvisited:  # true if list is non-empty
+        thiscycle = []
+        neighbors = unvisited
+        while neighbors:
+            current = neighbors[0]
+            thiscycle.append(current)
+            unvisited.remove(current)
+            neighbors = [j for i, j in edges.select(current, '*')
+                         if j in unvisited]
+        if len(cycle) > len(thiscycle):
+            cycle = thiscycle
+    return cycle
+
+def detectHamiltonian(V, E, bigM = 10):
+    """
+    Given a vertex list V and an edge list-of-tuples E, tries to find 
+    if a Hamiltonian cycle or Hamiltonian Path exists.
+    If the returned objective value equals:
+        len (V) + 1: Then a Hamiltonian cycle exists (and hence a path also exists)
+        len (V) + bigM: Then a Hamiltonian path exists, but not a cycle
+        anything larger: No Hamiltonian path exists (and hence no cycle exists either)
+    Along with the objective value, also returns the tour and the distance dictionary. 
+    """
+    n = len(V)
+    print('len(V)=', n)
+
+    dist = {(i,j): (1 if (((V[i],V[j]) in E) or ((V[j],V[i]) in E))  else bigM)
+            for i in range(len(V)) for j in range(i)
+           }
+
+    m = gp.Model()
+
+    # Create variables
+
+    vars = m.addVars(dist.keys(), obj=dist, vtype=gp.GRB.BINARY, name='e')
+    for i, j in vars.keys():
+        vars[j, i] = vars[i, j]  # edge in opposite direction
+
+    # Degree constraints
+    m.addConstrs(vars.sum(i, '*') == 2 for i in range(n))
+
+
+    m._vars = vars
+    m.Params.lazyConstraints = 1
+    print("Looking for Hamiltonian cycles.")
+    m.optimize(subtourelim)
+    vals = m.getAttr('x', vars)
+    selected = gp.tuplelist((i, j) for i, j in vals.keys() if vals[i, j] > 0.5)
+    tour = subtour(selected)
+    return  m.ObjVal, tour, dist
+
+def Hamiltonian(x_res):
+    global num_ambulances
+    global max_transition
+    global allocations
+    
+    V = []
+    for (alloc, rept) in x_res:
+        for rr in range(int(rept)):
+            V.append((alloc, rr))
+
+    E = []
+    max_amb = math.floor(num_ambulances*max_transition) # max number of ambulances that can transition between two configurations
+    for vv in V:
+        for vv2 in V:
+            a1 = allocations[vv[0]]
+            a2 = allocations[vv2[0]]
+            a_diff = [abs(a1[x]-a2[x]) for x in range(len(a1))]
+            if sum(a_diff)/2 < max_amb:
+                E.append((vv, vv2))
+    return detectHamiltonian(V, E)
+
+def printTour(tour, dist = None):
+    ttPrev = tour[-1]
+    for tt in tour:
+        if dist is None: 
+            d = ''
+        else:
+            if (tt, ttPrev) in dist:
+                d = dist[(tt, ttPrev)]
+            else:
+                d = dist[(ttPrev, tt)]
+        print( '----',d,'---- ', V[tt],sep='',end=' ')
+        ttPrev  = tt
+
+
 
 
 # Find one feasible configuration for the initial column.
@@ -101,7 +211,7 @@ while True:
                 a1 = allocations[V[i]]
                 a2 = allocations[V[j]]
                 max_amb = math.floor(num_ambulances*max_transition) # max number of ambulances that can transition between two configurations
-                a_diff = [abs(a1[x]-a2[x]) for x in range(len(V))]
+                a_diff = [abs(a1[x]-a2[x]) for x in range(len(a1))]
                 if sum(a_diff)/2 < max_amb:
                     E.append((V[i], V[j]))
         G = networkx.Graph()
@@ -113,6 +223,10 @@ while True:
             print('Root node is integer optimal')
         else:
             print('Root node IS NOT integer optimal')
+        # if networkx.is_connected(G) and min([i[1] for i in x_res]) >= len(V)-2:
+        ham, _, _ = Hamiltonian(x_res)
+        print('Ham obj=', ham)
+        # old check, fixed
         if networkx.is_connected(G) and min([i[1] for i in x_res]) >= len(V)-2:
             print('Hamiltonian path exists')
         else:
@@ -164,4 +278,8 @@ while True:
     coverages.append(cov)
     allocations.append(alloc)
     print()
+
+
+
+
 
