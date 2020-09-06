@@ -33,14 +33,15 @@ max_practical_ambulances = 4 # Maximum practical number of ambulances in a zone 
 
 from itertools import combinations
 def subtourelim(model, where):
+    n2 = model._n
     if where == gp.GRB.Callback.MIPSOL:
         # make a list of edges selected in the solution
         vals = model.cbGetSolution(model._vars)
         selected = gp.tuplelist((i, j) for i, j in model._vars.keys()
                                 if vals[i, j] > 0.5)
         # find the shortest cycle in the selected edge list
-        tour = subtour(selected)
-        if len(tour) < n:
+        tour = subtour(selected, n2)
+        if len(tour) < n2:
             # add subtour elimination constr. for every pair of cities in tour
             model.cbLazy(gp.quicksum(model._vars[i, j]
                                      for i, j in combinations(tour, 2))
@@ -49,9 +50,9 @@ def subtourelim(model, where):
 
 # Given a tuplelist of edges, find the shortest subtour
 
-def subtour(edges):
-    unvisited = list(range(n))
-    cycle = range(n+1)  # initial length has 1 more city
+def subtour(edges, n2):
+    unvisited = list(range(n2))
+    cycle = range(n2+1)  # initial length has 1 more city
     while unvisited:  # true if list is non-empty
         thiscycle = []
         neighbors = unvisited
@@ -63,6 +64,7 @@ def subtour(edges):
                          if j in unvisited]
         if len(cycle) > len(thiscycle):
             cycle = thiscycle
+
     return cycle
 
 def detectHamiltonian(V, E, bigM = 10):
@@ -70,13 +72,13 @@ def detectHamiltonian(V, E, bigM = 10):
     Given a vertex list V and an edge list-of-tuples E, tries to find 
     if a Hamiltonian cycle or Hamiltonian Path exists.
     If the returned objective value equals:
-        len (V) + 1: Then a Hamiltonian cycle exists (and hence a path also exists)
+        len (V): Then a Hamiltonian cycle exists (and hence a path also exists)
         len (V) + bigM: Then a Hamiltonian path exists, but not a cycle
         anything larger: No Hamiltonian path exists (and hence no cycle exists either)
     Along with the objective value, also returns the tour and the distance dictionary. 
     """
-    n = len(V)
-    print('len(V)=', n)
+    n2 = len(V)
+    print('len(V)=', n2)
 
     dist = {(i,j): (1 if (((V[i],V[j]) in E) or ((V[j],V[i]) in E))  else bigM)
             for i in range(len(V)) for j in range(i)
@@ -91,16 +93,17 @@ def detectHamiltonian(V, E, bigM = 10):
         vars[j, i] = vars[i, j]  # edge in opposite direction
 
     # Degree constraints
-    m.addConstrs(vars.sum(i, '*') == 2 for i in range(n))
+    m.addConstrs(vars.sum(i, '*') == 2 for i in range(n2))
 
 
     m._vars = vars
+    m._n = n2
     m.Params.lazyConstraints = 1
     print("Looking for Hamiltonian cycles.")
     m.optimize(subtourelim)
     vals = m.getAttr('x', vars)
     selected = gp.tuplelist((i, j) for i, j in vals.keys() if vals[i, j] > 0.5)
-    tour = subtour(selected)
+    tour = subtour(selected, n2)
     return  m.ObjVal, tour, dist
 
 def Hamiltonian(x_res):
@@ -122,6 +125,8 @@ def Hamiltonian(x_res):
             a_diff = [abs(a1[x]-a2[x]) for x in range(len(a1))]
             if sum(a_diff)/2 < max_amb:
                 E.append((vv, vv2))
+    print(V)
+    print(E)
     return detectHamiltonian(V, E)
 
 def printTour(tour, dist = None):
@@ -224,13 +229,17 @@ while True:
         else:
             print('Root node IS NOT integer optimal')
         # if networkx.is_connected(G) and min([i[1] for i in x_res]) >= len(V)-2:
-        ham, _, _ = Hamiltonian(x_res)
+        ham, tour, dist = Hamiltonian(x_res)
+        # for i in tour:
+        #     print(i)
+        print(tour)
         print('Ham obj=', ham)
+        print('len(V)=', num_rounds)
         # old check, fixed
-        if networkx.is_connected(G) and min([i[1] for i in x_res]) >= len(V)-2:
-            print('Hamiltonian path exists')
+        if networkx.is_connected(G):# and min([i[1] for i in x_res]) >= len(V)-2:
+            print('Philippe\'s old Hamiltonian path check: Hamiltonian path exists')
         else:
-            print('Hamiltonian path DOES NOT exist!')
+            print('Philippe\'s old Hamiltonian path check: Hamiltonian path DOES NOT exist!')
         break
     duals = [mp.getConstrByName(c).Pi for c in ['phi'+str(i) for i in range(n)]]
 #     print('==========>>> Duals:', [i for i in duals if i != 0])
