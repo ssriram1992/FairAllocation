@@ -28,7 +28,7 @@ num_rounds = 30
 max_transition = 0.5 # 0 = no transition allowed, 1 = unlimited transitions
 min_coverage = 0.95 # 0 = no one needs to be covered, 1 = everyone has to be covered
 max_practical_ambulances = 4 # Maximum practical number of ambulances in a zone (doesn't seem to make much of a difference). This is 4 because a base with 4 ambulances can sufficiently cover any zone no matter what its population density
-
+pool_size = 20
 
 
 from itertools import combinations
@@ -100,6 +100,7 @@ def detectHamiltonian(V, E, bigM = 10):
     m._n = n2
     m.Params.lazyConstraints = 1
     print("Looking for Hamiltonian cycles.")
+    m.Params.OutputFlag = 0
     m.optimize(subtourelim)
     vals = m.getAttr('x', vars)
     selected = gp.tuplelist((i, j) for i, j in vals.keys() if vals[i, j] > 0.5)
@@ -125,8 +126,8 @@ def Hamiltonian(x_res):
             a_diff = [abs(a1[x]-a2[x]) for x in range(len(a1))]
             if sum(a_diff)/2 < max_amb:
                 E.append((vv, vv2))
-    print(V)
-    print(E)
+    #print(V)
+    #print(E)
     return detectHamiltonian(V, E)
 
 def printTour(tour, dist = None):
@@ -198,48 +199,79 @@ while True:
 
     # Time horizon constraint: We must use T configurations.
     time_cons = mp.addConstr(gp.quicksum(x_vars) == num_rounds, name='time')
+
+    # get a pool of solutions
+    if optimal:
+        mp.Params.PoolSolutions = pool_size
+        mp.Params.PoolSearchMode = 2
     
     mp.update()
     mp.optimize()
+
+
+
+    
     if not optimal:
         relaxed_obj = mp.getObjective().getValue()
     obj = mp.getObjective().getValue()
     print('==========>>> MP objective:', obj)
+    ham_paths = []
+    obj_vals = []
     if optimal:
-        x_res = [(i, mp.getVarByName('x['+str(i)+']').X) for i in range(len(allocations))]
-        x_res = [i for i in x_res if i[1] > 0]
-        # If the graph is connected, and that the value of the variable which is used the least is used at least as much as the number of vertices-2, then a Hamiltonian path must exist.
-        V = [i[0] for i in x_res]
-        E = []
-        for i in range(len(V)-1):
-            for j in range(i+1, len(V)):
-                a1 = allocations[V[i]]
-                a2 = allocations[V[j]]
-                max_amb = math.floor(num_ambulances*max_transition) # max number of ambulances that can transition between two configurations
-                a_diff = [abs(a1[x]-a2[x]) for x in range(len(a1))]
-                if sum(a_diff)/2 < max_amb:
-                    E.append((V[i], V[j]))
-        G = networkx.Graph()
-        G.add_nodes_from(V)
-        G.add_edges_from(E)
-        print('================================================================')
-        print('Variables used:', x_res)
-        if obj == math.floor(relaxed_obj):
-            print('Root node is integer optimal')
-        else:
-            print('Root node IS NOT integer optimal')
-        # if networkx.is_connected(G) and min([i[1] for i in x_res]) >= len(V)-2:
-        ham, tour, dist = Hamiltonian(x_res)
-        # for i in tour:
-        #     print(i)
-        print(tour)
-        print('Ham obj=', ham)
-        print('len(V)=', num_rounds)
-        # old check, fixed
-        if networkx.is_connected(G):# and min([i[1] for i in x_res]) >= len(V)-2:
-            print('Philippe\'s old Hamiltonian path check: Hamiltonian path exists')
-        else:
-            print('Philippe\'s old Hamiltonian path check: Hamiltonian path DOES NOT exist!')
+        num_sols = mp.getAttr(gp.GRB.Attr.SolCount)
+        print(f'Found {num_sols} solutions')
+        for i in range(num_sols):
+            print('*********************************************************')
+            mp.setParam(gp.GRB.Param.SolutionNumber, i)
+            pool_obj_val_n = mp.PoolObjVal
+            print(i, pool_obj_val_n)
+            obj_vals.append(pool_obj_val_n)
+        
+            x_res = [(i, mp.getVarByName('x['+str(i)+']').Xn) for i in range(len(allocations))]
+            x_res = [i for i in x_res if i[1] > 0]
+            # If the graph is connected, and that the value of the variable which is used the least is used at least as much as the number of vertices-2, then a Hamiltonian path must exist.
+            V = [i[0] for i in x_res]
+            E = []
+            for i in range(len(V)-1):
+                for j in range(i+1, len(V)):
+                    a1 = allocations[V[i]]
+                    a2 = allocations[V[j]]
+                    max_amb = math.floor(num_ambulances*max_transition) # max number of ambulances that can transition between two configurations
+                    a_diff = [abs(a1[x]-a2[x]) for x in range(len(a1))]
+                    if sum(a_diff)/2 < max_amb:
+                        E.append((V[i], V[j]))
+            G = networkx.Graph()
+            G.add_nodes_from(V)
+            G.add_edges_from(E)
+            print('================================================================')
+            print('Variables used:', x_res)
+            if obj == math.floor(relaxed_obj):
+                print('Root node is integer optimal')
+            else:
+                print('Root node IS NOT integer optimal')
+            # if networkx.is_connected(G) and min([i[1] for i in x_res]) >= len(V)-2:
+            ham, tour, dist = Hamiltonian(x_res)
+            # for i in tour:
+            #     print(i)
+            #print(tour)
+            print('Ham obj=', ham)
+            print('len(V)=', num_rounds)
+            if ham == num_rounds:
+                ham_paths.append(1)
+            else:
+                ham_paths.append(0)
+            # old check, fixed
+            if networkx.is_connected(G):# and min([i[1] for i in x_res]) >= len(V)-2:
+                print('Philippe\'s old Hamiltonian path check: Hamiltonian path exists')
+            else:
+                print('Philippe\'s old Hamiltonian path check: Hamiltonian path DOES NOT exist!')
+        optimal_and_path = 0
+        for v, h in zip(obj_vals, ham_paths):
+            if v == math.floor(obj) and h == 1:
+                optimal_and_path += 1
+        print(obj_vals)
+        print(ham_paths)
+        print(optimal_and_path)
         break
     duals = [mp.getConstrByName(c).Pi for c in ['phi'+str(i) for i in range(n)]]
 #     print('==========>>> Duals:', [i for i in duals if i != 0])
@@ -287,7 +319,6 @@ while True:
     coverages.append(cov)
     allocations.append(alloc)
     print()
-
 
 
 
