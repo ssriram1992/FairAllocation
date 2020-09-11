@@ -1,5 +1,6 @@
-# This CP model returns an integer indicating the value of the best Hamiltonian
-# path for the pattern passed as input, or -1 if no such path exists.
+# This CP model returns a positive integer indicating the value of the best
+# Hamiltonian path for the pattern passed as input, or a negative integer if
+# no such path exists.
 
 
 from __future__ import absolute_import
@@ -28,7 +29,7 @@ import networkx
 # random.seed(13)#int(sys.argv[1]))
 # cov = [[random.randint(0, 1) for _ in range(4)] for _ in range(5)]
 
-# print(cov)
+# print('IN CP:', len(cov), len(cov[0]))
 
 def cp_solve(V, E, cov, num_rounds, ip_ub):
     """Solves the problem with a CP model.
@@ -42,7 +43,9 @@ def cp_solve(V, E, cov, num_rounds, ip_ub):
       ip_ub: Upper bound of the IP node that the CP model is solving.
 
     Returns:
-      Value of the best Hamiltonian path, -1 if no path exists.
+      - Objective value of the best Hamiltonian path, negative integer if no
+        path exists.
+      - A feasible solution for this objective value.
     """
     num_cols = len(V)
     num_zones = len(cov)
@@ -54,7 +57,7 @@ def cp_solve(V, E, cov, num_rounds, ip_ub):
     G.add_edges_from(E)
     # If the graph is not connected, no Hamiltonian path can exist.
     if not networkx.is_connected(G):
-        return -1
+        return -2, []
 
     # Variables.
     model = cp_model.CpModel()
@@ -74,7 +77,7 @@ def cp_solve(V, E, cov, num_rounds, ip_ub):
 
     # Objective (it cannot be greater than the UB of the IP model).
     phi = model.NewIntVar(0, math.floor(ip_ub), 'phi')
-    coverages = [model.NewIntVar(0, math.floor(ip_ub), 'c'+str(i))
+    coverages = [model.NewIntVar(0, num_rounds, 'c'+str(i))
                  for i in range(num_zones)]
     for i in range(num_zones):
         model.Add(cp_model.LinearExpr.ScalProd(x_occs, cov[i]) == coverages[i])
@@ -84,7 +87,7 @@ def cp_solve(V, E, cov, num_rounds, ip_ub):
     # Regular constraint (Hamiltonian path).
     # For the initial state, we use a dummy node which is connected to
     # all other nodes.
-    dummy = num_cols
+    dummy = max(V)+1
     start = dummy
     end = V
     arcs = [(dummy, i, i) for i in V]
@@ -110,9 +113,11 @@ def cp_solve(V, E, cov, num_rounds, ip_ub):
     #     print(f'occ{i} = {solver.Value(x_occs[i])}')
     
     if status == cp_model.OPTIMAL:
-        return solver.ObjectiveValue()
+        solution = [solver.Value(x[i]) for i in range(num_rounds)]
+        # solution = [solver.Value(coverages[i]) for i in range(num_zones)]
+        return solver.ObjectiveValue(), solution
     elif status == cp_model.INFEASIBLE:
-        return -1
+        return -1, []
 
 
-print(cp_solve(V, E, cov, num_rounds, ip_ub))
+# print(cp_solve(V, E, cov, num_rounds, ip_ub))
