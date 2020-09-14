@@ -73,7 +73,7 @@ def cp_solve(V, E, cov, num_rounds, ip_ub, cuts=[]):
             model.Add(x[j] != i).OnlyEnforceIf(boolvar.Not())
             occs.append(boolvar)
         x_occs.append(sum(occs))
-        model.AddLinearConstraint(x_occs[i], 1, num_rounds-num_cols+1)
+        #model.AddLinearConstraint(x_occs[i], 1, num_rounds-num_cols+1)
 
     # Add the CP cuts.
     for cut in cuts:
