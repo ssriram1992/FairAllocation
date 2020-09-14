@@ -31,7 +31,7 @@ import networkx
 
 # print('IN CP:', len(cov), len(cov[0]))
 
-def cp_solve(V, E, cov, num_rounds, ip_ub):
+def cp_solve(V, E, cov, num_rounds, ip_ub, cuts=[]):
     """Solves the problem with a CP model.
     
     Args:
@@ -74,6 +74,10 @@ def cp_solve(V, E, cov, num_rounds, ip_ub):
             occs.append(boolvar)
         x_occs.append(sum(occs))
         model.AddLinearConstraint(x_occs[i], 1, num_rounds-num_cols+1)
+
+    # Add the CP cuts.
+    for cut in cuts:
+        model.Add(sum(x_occs[i] for i in range(num_cols) if i in cut) <= num_rounds-1)
 
     # Objective (it cannot be greater than the UB of the IP model).
     phi = model.NewIntVar(0, math.floor(ip_ub), 'phi')

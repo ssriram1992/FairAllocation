@@ -3,6 +3,8 @@ import numpy
 from utrecht_scip import *
 import math
 import gurobipy as gp
+from ortools.sat.python import cp_model
+
 
 EPS = 1e-6
 
@@ -25,15 +27,10 @@ sufficient = utrecht.get_sufficient_coverage()
 # Model parameters
 num_ambulances = 20
 num_rounds = 30
-max_transition = 0.4 # 0 = no transition allowed, 1 = unlimited transitions
+max_transition = 0.45 # 0 = no transition allowed, 1 = unlimited transitions
 min_coverage = 0.95 # 0 = no one needs to be covered, 1 = everyone has to be covered
 max_practical_ambulances = 4 # Maximum practical number of ambulances in a zone (doesn't seem to make much of a difference). This is 4 because a base with 4 ambulances can sufficiently cover any zone no matter what its population density
 cuts = []
-
-"""
-TODO:
-- The CP model finds infeasible solutions both because the graph is disconnected and because there is no hamiltonian path in a connected graph. We should be able to find a hamiltonian path in a connected graph
-"""
 
 
 def initial_feasible_configuration():
@@ -64,6 +61,36 @@ allocation, coverage = initial_feasible_configuration()
 # Keeping track of allocations and coverages.
 allocations = [allocation]
 coverages = [coverage]
+
+
+# def pricing_problem_cp(duals, mu):
+#     #DO THIS IN minizinc
+#     model = cp_model.CpModel()
+#     u_vars = [model.NewIntVar(0, max_practical_ambulances, 'u'+str(i)) for i in range(len(bases))]
+#     c_vars = [model.NewBoolVar('') for i in range(n)]
+
+#     for i in range(n):
+#         model.Add(sum(adj[bases[j], i]*u_vars[j] for j in range(len(bases))) >= sufficient[i]).OnlyEnforceIf(c_vars[i])
+#         model.Add(sum(adj[bases[j], i]*u_vars[j] for j in range(len(bases))) <= sufficient[i]-1).OnlyEnforceIf(c_vars[i].Not())
+
+#     # Constraint: Don't use more than the available number of ambulances.
+#     model.Add(sum(u_vars) <= num_ambulances)
+    
+#     # Constraint: The configuration must sufficiently cover 95% of the zones.
+#     model.Add(sum(c_vars) >= math.ceil(min_coverage*n))
+
+#     # Objective
+#     model.Minimize(sum(c_vars[i]*duals[i] for i in range(n)))
+
+#     solver = cp_model.CpSolver()
+#     status = solver.Solve(model)
+    
+#     # Get the newly generated allocation and coverage
+#     cov = [int(solver.Value(c[i])) for i in range(n)]
+#     alloc = [int(solver.Value(u[i])) for i in range(len(bases))]
+
+#     return cov, alloc
+
 
 
 
@@ -127,9 +154,7 @@ def master_problem(cuts, integrality=False):
         phi_cons.append(mp.addConstr(gp.quicksum(coverages[j][i]*x_vars[j] for j in range(len(allocations))) - phi >= 0, name='phi'+str(i)))
 
     # Add cuts
-    print('num cuts:', len(cuts))
     for cut in cuts:
-        print(f'adding cut {cut}')
         mp.addConstr(gp.quicksum([x_vars[i] for i in cut]) <= num_rounds-1)
         
     # Time horizon constraint: We must use T configurations.
@@ -160,14 +185,26 @@ while True:
         obj, x_res, duals, mu = master_problem(cuts, True)
     else:
         obj, x_res, duals, mu = master_problem(cuts, False)
+    # obj, x_res, duals, mu = master_problem(cuts, False) #<==============================================
     
     if not optimal:
         relaxed_obj = obj
-    print('==========>>> MP objective:', obj)
+    print(f'==========>>> MP objective: {obj} ({len(cuts)} cuts)')
     if optimal:
         x_res = [(i, int(x_res[i])) for i in range(len(x_res))]
+        # print(f'The optimal LP solution uses {len(x_res)} variables.')
         V = [i[0] for i in x_res if i[1] > 0]
-        V0 = [i for i in range(len(V))]
+        V0 = [i for i in range(len(V))] # States of the automaton must start at 0.
+        # CP cuts must be adjusted to start form 0, like V0
+        cp_cuts = []
+        for cut in cuts: # todo: rename to ip_cuts
+            intersection = list(set(cut) & set(V))
+            if intersection == []:
+                continue
+            cp_cut = []
+            for node in intersection:
+                cp_cut.append(V0[V.index(node)])
+            cp_cuts.append(cp_cut)
         E = []
         for i in range(len(V0)-1):
             for j in range(i+1, len(V0)):
@@ -178,14 +215,14 @@ while True:
                 if sum(a_diff)/2 < max_amb:
                     E.append((V0[i], V0[j]))
                     E.append((V0[j], V0[i]))
+                    
         c = [coverages[i] for i in range(len(coverage)) if i in V]
         c = [list(x) for x in zip(*c)]
 
         import cp
-        cp_obj, cp_sol = cp.cp_solve(V0, E, c, num_rounds, obj)
-        print('CP OBJ:', cp_obj)
+        cp_obj, cp_sol = cp.cp_solve(V0, E, c, num_rounds, obj, cp_cuts)
+        print('Integer solution found, checking with CP. CP obj is:', cp_obj)
         if cp_obj < 0:
-            print('cp infeasible for solution:', [i for i in x_res if i[1] > 0])
             optimal = False
             cuts.append(V)
             continue
@@ -206,12 +243,11 @@ while True:
     
     cov, alloc = pricing_problem(duals, mu)
     if alloc in allocations:
-        print('==========>>> Generation of an already existing column. Exiting.')
+        print('==========>>> Optimal relaxed solution found.')
         optimal = True
 #     print('==========>>> Adding new column')
     coverages.append(cov)
     allocations.append(alloc)
-    print()
 
 
 
