@@ -45,7 +45,7 @@ num_rounds = 30
 max_transition = 0.45 # 0 = no transition allowed, 1 = unlimited transitions
 min_coverage = 0.95 # 0 = no one needs to be covered, 1 = everyone has to be covered
 max_practical_ambulances = max(sufficient)
-mp_integer = False # True: The once the LP is optimal, the MP is solved with integer constraints on these columns, and this solution is given to the CP model. False: The LP solution is given to the CP model.
+mp_integer = True # True: The once the LP is optimal, the MP is solved with integer constraints on these columns, and this solution is given to the CP model. False: The LP solution is given to the CP model.
 verbose = True
 
 ################################################################################
@@ -169,7 +169,7 @@ def master_problem(cuts, integrality=False):
 
 
 def cp_solve(V, E, col_cov, cuts=[]):
-    """Solves the problem with a CP model.
+    """Solves a partial problem with a CP model.
     
     Args:
       V: List of vertices (columns).
@@ -208,13 +208,14 @@ def cp_solve(V, E, col_cov, cuts=[]):
             model.Add(x[j] != i).OnlyEnforceIf(boolvar.Not())
             occs.append(boolvar)
         x_occs.append(sum(occs))
-        model.AddLinearConstraint(x_occs[i], 1, num_rounds-num_cols+1) # we remove this since we use the LP solution
+        # if mp_integer:
+        #     model.AddLinearConstraint(x_occs[i], 1, num_rounds-num_cols+1)
 
     # Add the CP cuts.
     for cut in cuts:
         model.Add(sum(x_occs[i] for i in range(num_cols) if i in cut) <= num_rounds-1)
 
-    # Objective (it cannot be greater than the UB of the IP model).
+    # Objective.
     phi = model.NewIntVar(int(lb), math.floor(ub), 'phi')
     coverages = [model.NewIntVar(0, num_rounds, 'c'+str(i))
                  for i in range(num_zones)]
@@ -237,30 +238,13 @@ def cp_solve(V, E, col_cov, cuts=[]):
     # Solve the model.
     solver = cp_model.CpSolver()
     status = solver.Solve(model)
-
-    s = {cp_model.OPTIMAL: 'optimal',
-         cp_model.FEASIBLE: 'feasible',
-         cp_model.INFEASIBLE: 'infeasible',
-         cp_model.MODEL_INVALID: 'model invalid',
-         cp_model.UNKNOWN: 'unknown'}
-
     assert status == cp_model.OPTIMAL or status == cp_model.INFEASIBLE
 
-    # for i in range(num_rounds):
-    #     print(f'x{i} = {solver.Value(x[i])}')
-    # for i in range(num_cols):
-    #     print(f'occ{i} = {solver.Value(x_occs[i])}')
-    
     if status == cp_model.OPTIMAL:
         solution = [solver.Value(x[i]) for i in range(num_rounds)]
-        # solution = [solver.Value(coverages[i]) for i in range(num_zones)]
         return solver.ObjectiveValue(), solution
     elif status == cp_model.INFEASIBLE:
         return -1, []
-
-
-# print(cp_solve(V, E, cov, num_rounds, ip_ub))
-
 
 
 # Initial feasible column.
@@ -273,35 +257,28 @@ coverages = [coverage]
 mp_cuts = []
 lb = 0
 ub = math.inf
-optimal = False
-lp_obj = -1
-
-# print the LP sol, UB, LB, num cols, num mp_cuts
-# TODO: have 2 options: solve cp on LP solution vs IP solution (this requires a small modification to the cp model (one constraint)
-# TODO: put the CP model in here
-
-
+lp_optimal = False
 while True:
-
-    if optimal:
+    if lp_optimal and mp_integer:
         obj, x_res, duals, mu = master_problem(mp_cuts, True)
     else:
         obj, x_res, duals, mu = master_problem(mp_cuts, False)
+    if lp_optimal:
+        ub = obj
 
-    # obj, x_res, duals, mu = master_problem(mp_cuts, False)
-    ub = obj
-    
-    if not optimal:
-        lp_obj = obj
-    print(f'==========>>> MP objective: {obj} ({len(mp_cuts)} cuts)')
-    if optimal:
-        x_res = [(i, int(x_res[i])) for i in range(len(x_res))]
+    if verbose:
+        print(f'LP obj: {round(obj, 2)},\tLB: {lb},\tUB: {ub},\t{len(x_res)} columns,\t{len(mp_cuts)} cuts')
+
+    if lp_optimal:
+        x_res = [(i, x_res[i]) for i in range(len(x_res))]
         V = [i[0] for i in x_res if i[1] > 0]
-        print(f'The IP solution uses {len(V)} variables.')
+        if verbose:
+            print(f'Solving the CP model with {len(V)} variables.')
+
+        # Create the CP cuts.
         V0 = [i for i in range(len(V))] # States of the automaton must start at 0.
-        # CP cuts must be adjusted to start form 0, like V0
-        cp_cuts = []
-        for cut in mp_cuts: # todo: rename to ip_cuts
+        cp_cuts = [] # CP cuts must be adjusted to start form 0, like V0.
+        for cut in mp_cuts:
             intersection = list(set(cut) & set(V))
             if intersection == []:
                 continue
@@ -309,54 +286,56 @@ while True:
             for node in intersection:
                 cp_cut.append(V0[V.index(node)])
             cp_cuts.append(cp_cut)
+
+        # Create the graph for the CP regular constraint.
         E = []
         for i in range(len(V0)-1):
             for j in range(i+1, len(V0)):
                 a1 = allocations[V[V0[i]]]
                 a2 = allocations[V[V0[j]]]
-                max_amb = math.floor(num_ambulances*max_transition) # max number of ambulances that can transition between two configurations
+                # Maximum number of ambulances that can transition between two configurations.
+                max_amb = math.floor(num_ambulances*max_transition)
                 a_diff = [abs(a1[x]-a2[x]) for x in range(len(a1))]
                 if sum(a_diff)/2 < max_amb:
                     E.append((V0[i], V0[j]))
                     E.append((V0[j], V0[i]))
-                    
+
+        # Get the coverages of the subset of columns which take nonzero values.
         c = [coverages[i] for i in range(len(coverage)) if i in V]
         c = [list(x) for x in zip(*c)]
 
-
+        # Solve the CP model.
         cp_obj, cp_sol = cp_solve(V0, E, c, cp_cuts)
-        print('Integer solution found, checking with CP. CP obj is:', cp_obj)
+        lb = max(lb, cp_obj)
+        if verbose:
+            if cp_obj == -2:
+                print(f'CP solution infeasible: Graph is not connected.')
+            elif cp_obj == -1:
+                print(f'CP solution infeasible: Graph is connected, but contains no Hamiltonian path.')
+            else:
+                print(f'CP solution is feasible with value {cp_obj}.')
+
         if cp_obj < math.floor(ub):
-            optimal = False
+            lp_optimal = False
             mp_cuts.append(V)
             continue
         else:
-            print('================================================================')
-            print(f'CP SOL is {cp_obj} and allocation is {cp_sol}')
-            #print('Variables used:', x_res)
-            print('OBJ=', obj)
-            # if obj == math.floor(lp_obj):
-            #     print('Root node is integer optimal')
-            # else:
-            #     print('Root node IS NOT integer optimal')
+            print('Optimality is proven.')
+            check_allocations = []
+            for i in x_res:
+                for j in range(int(i[1])):
+                    check_allocations.append(allocations[i[0]])
+            print(f'there are {len(check_allocations)} allocations')
+            check_value = min(utrecht.allocations_coverage(check_allocations))
+            print(f'Checking value of optimal solution: {check_value}')
+            assert check_value == ub
             break
-
-
-
-    ##### PRICING PROBLEM
     
-    alloc, cov = pricing_problem(duals, mu)
-    if alloc in allocations:
-        print('==========>>> Optimal relaxed solution found.')
-        optimal = True
-#     print('==========>>> Adding new column')
-    coverages.append(cov)
-    allocations.append(alloc)
-
-
-
-    
-
-
-# add solution checker to utrecht_scip
-# put everything in this file
+    allocation, coverage = pricing_problem(duals, mu)
+    if allocation in allocations:
+        print('Generated column already exists.')
+        
+        print
+        lp_optimal = True
+    coverages.append(coverage)
+    allocations.append(allocation)
