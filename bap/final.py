@@ -1,7 +1,7 @@
 # TODO:
 # - Add the 1-config graph inequalities proposed by Sriram.
 # - Add the cuts as lazy cuts instead of starting from scratch each time (actually, this is not possible? See https://support.gurobi.com/hc/en-us/articles/360013197972-How-do-I-implement-lazy-constraints-in-Gurobi-).
-# - Replace OR-Tools by MiniZinc: It allows a CP-based pricing problem, and GCC for the other CP model.
+# - Replace OR-Tools by MiniZinc: It allows a CP-based pricing problem (although this may not help much), and GCC for the other CP model.
 # - Find a better way to determine what is the sufficient coverage associated with a population density?
 
 
@@ -12,6 +12,8 @@ import numpy
 from ortools.sat.python import cp_model
 from utrecht_scip import *
 import sys
+import time
+# for i in {1..20}; do mt=`bc -l <<< $i/20`; echo $mt; python final.py $mt > 0$mt.txt; done
 
 
 ### PARAMETERS #################################################################
@@ -37,11 +39,16 @@ sufficient = utrecht.get_sufficient_coverage()
 # Other parameters.
 num_ambulances = 20
 num_rounds = 30
-max_transition = 0.6 # 0 = no transition allowed, 1 = unlimited transitions
+cl = True # Accept arguments from the command line
+if cl:
+    max_transition = float(sys.argv[1])
+else:
+    max_transition = 0.5 # 0 = no transition allowed, 1 = unlimited transitions
 min_coverage = 0.95 # 0 = no one needs to be covered, 1 = everyone has to be covered
 max_practical_ambulances = max(sufficient)
-mp_integer = True # True: The once the LP is optimal, the MP is solved with integer constraints on these columns, and this solution is given to the CP model. False: The LP solution is given to the CP model.
+mp_integer = False # True: The once the LP is optimal, the MP is solved with integer constraints on these columns, and this solution is given to the CP model. False: The LP solution is given to the CP model.
 verbose = True
+time_limit = 300
 
 ################################################################################
 
@@ -70,48 +77,10 @@ def initial_feasible_configuration():
     
     m.update()
     m.optimize()
-    allocation = [m.getVarByName(f'x[{i}]').X for i in range(len(x))]
+    allocation = [round(m.getVarByName(f'x[{i}]').X) for i in range(len(x))]
     coverage = utrecht.allocation_coverage(allocation)
 
     return allocation, coverage
-
-
-# def pricing_problem_cp(duals, mu):
-#     model = cp_model.CpModel()
-#     u_vars = [model.NewIntVar(0, max_practical_ambulances, 'u'+str(i)) for i in range(len(bases))]
-#     c_vars = [model.NewBoolVar('') for i in range(n)]
-
-#     for i in range(n):
-#         model.Add(sum(adj[bases[j], i]*u_vars[j] for j in range(len(bases))) >= sufficient[i]).OnlyEnforceIf(c_vars[i])
-#         model.Add(sum(adj[bases[j], i]*u_vars[j] for j in range(len(bases))) <= sufficient[i]-1).OnlyEnforceIf(c_vars[i].Not())
-
-#     # Constraint: Don't use more than the available number of ambulances.
-#     model.Add(sum(u_vars) <= num_ambulances)
-    
-#     # Constraint: The configuration must sufficiently cover 95% of the zones.
-#     model.Add(sum(c_vars) >= math.ceil(min_coverage*n))
-
-#     # Don't generate a column which already exists.
-#     model.AddForbiddenAssignments(u_vars, [tuple(int(j) for j in i) for i in allocations])
-    
-#     # Objective
-#     duals = [int(i*100) for i in duals]
-#     model.Add(sum(c_vars[i]*duals[i] for i in range(n)) < -1)
-
-#     solver = cp_model.CpSolver()
-#     status = solver.Solve(model)
-#     s = {cp_model.OPTIMAL: 'optimal',
-#          cp_model.FEASIBLE: 'feasible',
-#          cp_model.INFEASIBLE: 'infeasible',
-#          cp_model.MODEL_INVALID: 'model invalid',
-#          cp_model.UNKNOWN: 'unknown'}
-#     print(s[status])
-
-#     # Get the newly generated allocation and coverage
-#     cov = [int(solver.Value(c_vars[i])) for i in range(n)]
-#     alloc = [int(solver.Value(u_vars[i])) for i in range(len(bases))]
-#     print(alloc)
-#     return alloc, cov, []
 
 
 def pricing_problem(duals, mu):
@@ -147,14 +116,13 @@ def pricing_problem(duals, mu):
     pp.optimize()    
     allocation = [round(pp.getVarByName(f'u[{i}]').X) for i in range(len(bases))]
     coverage = [round(pp.getVarByName(f'c[{i}]').X) for i in range(n)]
-    c_temp = [pp.getVarByName(f'c[{i}]').X for i in range(n)]
-    a_temp = [pp.getVarByName(f'u[{i}]').X for i in range(len(bases))]
-
+    assert coverage == utrecht.allocation_coverage(allocation)
+    
     violation = -(pp.getObjective().getValue()+mu)
     if verbose:
         print(f'Generated a column (violation {violation})')
     
-    return allocation, coverage, c_temp, a_temp
+    return allocation, coverage
 
 
 def master_problem(cuts, integrality=False):
@@ -282,6 +250,8 @@ def cp_solve(V, E, col_cov, cuts=[]):
         return -1, []
 
 
+start_time = time.time()
+    
 # Initial feasible column.
 allocation, coverage = initial_feasible_configuration()
 
@@ -295,6 +265,8 @@ ub = math.inf
 lp_optimal = False
 lp_obj = -1
 while True:
+    if time.time() - start_time > time_limit:
+        break
     if lp_optimal and mp_integer:
         obj, x_res, duals, mu = master_problem(mp_cuts, True)
     else:
@@ -357,42 +329,19 @@ while True:
             mp_cuts.append(V)
             continue
         else:
-            print('Optimality is proven.')
             check_allocations = []
-            for i in x_res:
-                for j in range(int(i[1])):
-                    check_allocations.append(allocations[i[0]])
-            print(f'there are {len(check_allocations)} allocations')
+            for i in cp_sol:
+                check_allocations.append(allocations[V[V0[i]]])
             check_value = min(utrecht.allocations_coverage(check_allocations))
-            print(f'Checking value of optimal solution: {check_value}')
             assert check_value == ub
+            print('Optimality is proven.')
             break
     
-    allocation, coverage, c_temp, a_temp = pricing_problem(duals, mu)
-    # assert coverage == utrecht.allocation_coverage(allocation)
-    if not (coverage == utrecht.allocation_coverage(allocation)):
-        print('Real coverage:', utrecht.allocation_coverage(allocation))
-        print('PP coverage:', coverage)
-        print('PP coverage (raw):', c_temp)
-        print('PP allocation:', allocation)
-        print('PP allocation (raw):', a_temp)
-        print('Pricing problem outputs wrong coverage!')
-        exit(1)
+    allocation, coverage = pricing_problem(duals, mu)
     if allocation in allocations:
         print('Generated column already exists.')
         lp_optimal = True
     coverages.append(coverage)
     allocations.append(allocation)
-
-
-        # check_allocations = []
-        # for i in range(len(x_res)):
-        #     for j in range(int(x_res[i])):
-        #         check_allocations.append(allocations[i])
-        # print(f'there are {len(check_allocations)} allocations')
-        # check_value = min(utrecht.allocations_coverage(check_allocations))
-        # print(f'Checking value of optimal solution: {check_value}')
-        # exit()
-
-
-
+    
+print(time.time()-start_time)
