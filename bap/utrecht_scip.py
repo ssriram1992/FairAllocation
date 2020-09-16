@@ -146,3 +146,11 @@ class Utrecht:
         # Normalize ambulance coverage to sufficient coverage
         coverages = [1 if coverages[i] >= sufficient[i] else 0 for i in range(n)]
         return coverages
+
+
+    def allocations_coverage(self, allocations):
+        """Get the cumulative sufficient coverage vector associated with a list of allocations."""
+        coverages = []
+        for allocation in allocations:
+            coverages.append(self.allocation_coverage(allocation))
+        return [sum(x) for x in zip(*coverages)]

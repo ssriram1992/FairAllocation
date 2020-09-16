@@ -5,11 +5,6 @@
 # - Find a better way to determine what is the sufficient coverage associated with a population density?
 
 
-# from __future__ import absolute_import
-# from __future__ import division
-# from __future__ import print_function
-
-
 import gurobipy as gp
 import math
 import networkx
@@ -258,16 +253,18 @@ mp_cuts = []
 lb = 0
 ub = math.inf
 lp_optimal = False
+lp_obj = -1
 while True:
     if lp_optimal and mp_integer:
         obj, x_res, duals, mu = master_problem(mp_cuts, True)
     else:
         obj, x_res, duals, mu = master_problem(mp_cuts, False)
+        lp_obj = obj
     if lp_optimal:
-        ub = obj
+        ub = math.floor(obj)
 
     if verbose:
-        print(f'LP obj: {round(obj, 2)},\tLB: {lb},\tUB: {ub},\t{len(x_res)} columns,\t{len(mp_cuts)} cuts')
+        print(f'LP obj: {round(lp_obj, 2)},\tLB: {lb},\tUB: {ub},\t{len(x_res)} columns,\t{len(mp_cuts)} cuts')
 
     if lp_optimal:
         x_res = [(i, x_res[i]) for i in range(len(x_res))]
@@ -332,10 +329,24 @@ while True:
             break
     
     allocation, coverage = pricing_problem(duals, mu)
+    # assert coverage == utrecht.allocation_coverage(allocation)
+    if not (coverage == utrecht.allocation_coverage(allocation)):
+        print(coverage)
+        print(utrecht.allocation_coverage(allocation))
+        print('Pricing problem outputs wrong coverage!')
+        exit(1)
     if allocation in allocations:
         print('Generated column already exists.')
-        
-        print
         lp_optimal = True
     coverages.append(coverage)
     allocations.append(allocation)
+
+
+        # check_allocations = []
+        # for i in range(len(x_res)):
+        #     for j in range(int(x_res[i])):
+        #         check_allocations.append(allocations[i])
+        # print(f'there are {len(check_allocations)} allocations')
+        # check_value = min(utrecht.allocations_coverage(check_allocations))
+        # print(f'Checking value of optimal solution: {check_value}')
+        # exit()
