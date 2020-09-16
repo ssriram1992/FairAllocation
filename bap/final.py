@@ -37,7 +37,7 @@ sufficient = utrecht.get_sufficient_coverage()
 # Other parameters.
 num_ambulances = 20
 num_rounds = 30
-max_transition = 0.45 # 0 = no transition allowed, 1 = unlimited transitions
+max_transition = 0.6 # 0 = no transition allowed, 1 = unlimited transitions
 min_coverage = 0.95 # 0 = no one needs to be covered, 1 = everyone has to be covered
 max_practical_ambulances = max(sufficient)
 mp_integer = True # True: The once the LP is optimal, the MP is solved with integer constraints on these columns, and this solution is given to the CP model. False: The LP solution is given to the CP model.
@@ -125,9 +125,6 @@ def pricing_problem(duals, mu):
       A new allocation and its coverage.
     """
     pp = gp.Model()
-    # pp.setParam(gp.GRB.Param.IntFeasTol, 1e-09)
-    # pp.setParam(gp.GRB.Param.FeasibilityTol, 1e-09)
-    # pp.setParam(gp.GRB.Param.OptimalityTol, 1e-09)
     pp.Params.OutputFlag = 0
     c_vars = pp.addVars(n, vtype=gp.GRB.BINARY, name='c')
     u_vars = pp.addVars(len(bases), vtype=gp.GRB.INTEGER, lb=0, ub=max_practical_ambulances, name='u')
@@ -148,8 +145,8 @@ def pricing_problem(duals, mu):
 
     pp.update()
     pp.optimize()    
-    allocation = [int(pp.getVarByName(f'u[{i}]').X) for i in range(len(bases))]
-    coverage = [int(pp.getVarByName(f'c[{i}]').X) for i in range(n)]
+    allocation = [round(pp.getVarByName(f'u[{i}]').X) for i in range(len(bases))]
+    coverage = [round(pp.getVarByName(f'c[{i}]').X) for i in range(n)]
     c_temp = [pp.getVarByName(f'c[{i}]').X for i in range(n)]
     a_temp = [pp.getVarByName(f'u[{i}]').X for i in range(len(bases))]
 
