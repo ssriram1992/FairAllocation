@@ -76,6 +76,44 @@ def initial_feasible_configuration():
     return allocation, coverage
 
 
+# def pricing_problem_cp(duals, mu):
+#     model = cp_model.CpModel()
+#     u_vars = [model.NewIntVar(0, max_practical_ambulances, 'u'+str(i)) for i in range(len(bases))]
+#     c_vars = [model.NewBoolVar('') for i in range(n)]
+
+#     for i in range(n):
+#         model.Add(sum(adj[bases[j], i]*u_vars[j] for j in range(len(bases))) >= sufficient[i]).OnlyEnforceIf(c_vars[i])
+#         model.Add(sum(adj[bases[j], i]*u_vars[j] for j in range(len(bases))) <= sufficient[i]-1).OnlyEnforceIf(c_vars[i].Not())
+
+#     # Constraint: Don't use more than the available number of ambulances.
+#     model.Add(sum(u_vars) <= num_ambulances)
+    
+#     # Constraint: The configuration must sufficiently cover 95% of the zones.
+#     model.Add(sum(c_vars) >= math.ceil(min_coverage*n))
+
+#     # Don't generate a column which already exists.
+#     model.AddForbiddenAssignments(u_vars, [tuple(int(j) for j in i) for i in allocations])
+    
+#     # Objective
+#     duals = [int(i*100) for i in duals]
+#     model.Add(sum(c_vars[i]*duals[i] for i in range(n)) < -1)
+
+#     solver = cp_model.CpSolver()
+#     status = solver.Solve(model)
+#     s = {cp_model.OPTIMAL: 'optimal',
+#          cp_model.FEASIBLE: 'feasible',
+#          cp_model.INFEASIBLE: 'infeasible',
+#          cp_model.MODEL_INVALID: 'model invalid',
+#          cp_model.UNKNOWN: 'unknown'}
+#     print(s[status])
+
+#     # Get the newly generated allocation and coverage
+#     cov = [int(solver.Value(c_vars[i])) for i in range(n)]
+#     alloc = [int(solver.Value(u_vars[i])) for i in range(len(bases))]
+#     print(alloc)
+#     return alloc, cov, []
+
+
 def pricing_problem(duals, mu):
     """Generates a new column.
     
@@ -87,6 +125,9 @@ def pricing_problem(duals, mu):
       A new allocation and its coverage.
     """
     pp = gp.Model()
+    # pp.setParam(gp.GRB.Param.IntFeasTol, 1e-09)
+    # pp.setParam(gp.GRB.Param.FeasibilityTol, 1e-09)
+    # pp.setParam(gp.GRB.Param.OptimalityTol, 1e-09)
     pp.Params.OutputFlag = 0
     c_vars = pp.addVars(n, vtype=gp.GRB.BINARY, name='c')
     u_vars = pp.addVars(len(bases), vtype=gp.GRB.INTEGER, lb=0, ub=max_practical_ambulances, name='u')
@@ -109,12 +150,14 @@ def pricing_problem(duals, mu):
     pp.optimize()    
     allocation = [int(pp.getVarByName(f'u[{i}]').X) for i in range(len(bases))]
     coverage = [int(pp.getVarByName(f'c[{i}]').X) for i in range(n)]
+    c_temp = [pp.getVarByName(f'c[{i}]').X for i in range(n)]
+    a_temp = [pp.getVarByName(f'u[{i}]').X for i in range(len(bases))]
 
     violation = -(pp.getObjective().getValue()+mu)
     if verbose:
         print(f'Generated a column (violation {violation})')
     
-    return allocation, coverage
+    return allocation, coverage, c_temp, a_temp
 
 
 def master_problem(cuts, integrality=False):
@@ -328,11 +371,14 @@ while True:
             assert check_value == ub
             break
     
-    allocation, coverage = pricing_problem(duals, mu)
+    allocation, coverage, c_temp, a_temp = pricing_problem(duals, mu)
     # assert coverage == utrecht.allocation_coverage(allocation)
     if not (coverage == utrecht.allocation_coverage(allocation)):
-        print(coverage)
-        print(utrecht.allocation_coverage(allocation))
+        print('Real coverage:', utrecht.allocation_coverage(allocation))
+        print('PP coverage:', coverage)
+        print('PP coverage (raw):', c_temp)
+        print('PP allocation:', allocation)
+        print('PP allocation (raw):', a_temp)
         print('Pricing problem outputs wrong coverage!')
         exit(1)
     if allocation in allocations:
@@ -350,3 +396,6 @@ while True:
         # check_value = min(utrecht.allocations_coverage(check_allocations))
         # print(f'Checking value of optimal solution: {check_value}')
         # exit()
+
+
+
