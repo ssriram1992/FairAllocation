@@ -1,6 +1,6 @@
 import networkx
 import numpy
-from pyscipopt import Model, Pricer, SCIP_RESULT, SCIP_PARAMSETTING, quicksum
+from pyscipopt import *#Model, Pricer, SCIP_RESULT, SCIP_PARAMSETTING, quicksum, Branchrule
 from utrecht_scip import *
 import math
 
@@ -24,10 +24,171 @@ sufficient = utrecht.get_sufficient_coverage()
 
 # Model parameters
 num_ambulances = 20
-num_rounds = 3
+num_rounds = 30
 max_transition = 1 # 0 = no transition allowed, 1 = unlimited transitions
 min_coverage = 0.95 # 0 = no one needs to be covered, 1 = everyone has to be covered
 max_practical_ambulances = 4 # Maximum practical number of ambulances in a zone (doesn't seem to make much of a difference). This is 4 because a base with 4 ambulances can sufficiently cover any zone no matter what its population density
+
+try:
+    from types import SimpleNamespace
+except:
+    class SimpleNamespace:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+        def __repr__(self):
+            keys = sorted(self.__dict__)
+            items = ("{}={!r}".format(k, self.__dict__[k]) for k in keys)
+            return "{}({})".format(type(self).__name__, ", ".join(items))
+
+        def __eq__(self, other):
+            return self.__dict__ == other.__dict__
+
+
+class AmbulanceConshdlr(Conshdlr):
+
+    def constrans(self, sourceconstraint):
+        '''sets method of constraint handler to transform constraint data into data belonging to the transformed problem '''
+        print("****************** CONSTRANS")
+        return {}
+
+    def consinitlp(self, constraints):
+        '''calls LP initialization method of constraint handler to separate all initial active constraints '''
+        print("****************** CONSINITLP")
+        return {}
+
+    def conssepalp(self, constraints, nusefulconss):
+        '''calls separator method of constraint handler to separate LP solution '''
+        print("****************** CONSSEPALP")
+        return {}
+
+    def conssepasol(self, constraints, nusefulconss, solution):
+        '''calls separator method of constraint handler to separate given primal solution '''
+        print("****************** CONSSEPASOL")
+        return {}
+
+    def consenfolp(self, constraints, nusefulconss, solinfeasible):
+        '''calls enforcing method of constraint handler for LP solution for all constraints added'''
+        print("****************** CONSENFOLP")
+        print('solution is:', [constraints[0].data.model.getVal(i) for i in constraints[0].data.vars])
+        """In contrast to the LP branching candidates and the pseudo branching candidates, the list of external branching candidates will not be generated automatically. The user has to add all variables to the list by calling SCIPaddExternBranchCand() for each of them. Usually, this will happen in the execution method of a relaxation handler or in the enforcement methods of a constraint handler."""
+        return {"result": SCIP_RESULT.BRANCHED}
+
+    def consenforelax(self, solution, constraints, nusefulconss, solinfeasible):
+        '''calls enforcing method of constraint handler for a relaxation solution for all constraints added'''
+        print("****************** CONSENFORELAX")
+        return {}
+
+    def consenfops(self, constraints, nusefulconss, solinfeasible, objinfeasible):
+        '''calls enforcing method of constraint handler for pseudo solution for all constraints added'''
+        print("****************** CONSENFOPS")
+        return {}
+
+    def conscheck(self, constraints, solution, checkintegrality, checklprows, printreason, completely):
+        '''calls feasibility check method of constraint handler '''
+        # if the solution is not integer then it is valid by default, since we only check integer solutions
+        # check for hamiltonian path
+        print("****************** CONSCHECK")
+        assert len(constraints) == 1
+        print('solution is:', [constraints[0].data.model.getVal(i) for i in constraints[0].data.vars])
+        return {"result": SCIP_RESULT.INFEASIBLE}
+
+    def consprop(self, constraints, nusefulconss, nmarkedconss, proptiming):
+        '''calls propagation method of constraint handler '''
+        print("****************** CONSPROP")
+        return {}
+
+    def conspresol(self, constraints, nrounds, presoltiming,
+                   nnewfixedvars, nnewaggrvars, nnewchgvartypes, nnewchgbds, nnewholes,
+                   nnewdelconss, nnewaddconss, nnewupgdconss, nnewchgcoefs, nnewchgsides, result_dict):
+        '''calls presolving method of constraint handler '''
+        print("****************** CONSPRESOL")
+        return result_dict
+
+    def consresprop(self):
+        '''sets propagation conflict resolving method of constraint handler '''
+        print("****************** CONSRESPROP")
+        return {}
+
+    def conslock(self, constraint, locktype, nlockspos, nlocksneg):
+        '''variable rounding lock method of constraint handler'''
+        print("****************** CONSLOCK")
+        return {}
+
+    def consgetnvars(self, constraint):
+        '''sets constraint variable number getter method of constraint handler '''
+        print("****************** CONSGETNVARS")
+        return {}
+
+
+# class AmbulanceRelax(Relax):
+#     def __init__(self):
+#         pass
+    
+#     def relaxfree(self):
+#         print('calls destructor and frees memory of relaxation handler')
+
+#     def relaxinit(self):
+#         print('initializes relaxation handler')
+
+#     def relaxexit(self):
+#         print('calls exit method of relaxation handler')
+
+#     def relaxinitsol(self):
+#         print('informs relaxaton handler that the branch and bound process is being started')
+
+#     def relaxexitsol(self):
+#         print('informs relaxation handler that the branch and bound process data is being freed')
+        
+#     def relaxexec(self):
+#         print("python error in relaxexec: this method needs to be implemented")
+#         return{}
+
+
+class AmbulanceBranching(Branchrule):
+    def __init__(self, model, variables):
+        self.model = model
+        self.variables = variables # We can add all the parameeters we need, such as the variables
+        
+    def branchfree(self):
+        print('==========> Branching: Free memory')
+        pass
+    
+    def branchinit(self):
+        print('==========> Branching: Initialize')
+        pass
+    
+    def branchexit(self):
+        print('==========> Branching: Deinitialize')
+        pass
+     
+    def branchinitsol(self):
+        print('==========> Branching: Start branch and bound')
+        pass
+     
+    def branchexitsol(self):
+        print('==========> Branching: Stop branch and bound')
+        pass
+
+    # Branching rule: Executes branching rule for fractional LP solution
+    # This function must be defined by the user
+    def branchexeclp(self, allowaddcons):
+        print(f'******************* Choices: {self.model.getLPBranchCands()}')
+        #self.choice = self.model.getLPBranchCands()[0][0] if self.model.getLPBranchCands()[0][0] != 't_phi' else self.model.getLPBranchCands()[0][1]
+        self.choice = self.model.getLPBranchCands()[0][0]
+        down, eq, up = self.model.branchVar(self.choice)
+        print('==========> Branching on', self.choice)
+        return {"result": SCIP_RESULT.BRANCHED}
+
+    # Optional: Executes branching rule for external branching candidates
+    def branchexecext(self, alloaddcons):
+        print('==========> ENTERING BRANCHEXECEXT')
+
+    # Optional: Executes branching rule for not completely fixed pseudo solution
+    def branchexecps(self, alloaddcons):
+        print('==========> ENTERING BRANCHEXECPS')
+        return {"result": SCIP_RESULT.DIDNOTRUN}
+
 
 
 class AmbulancePricer(Pricer):
@@ -35,14 +196,21 @@ class AmbulancePricer(Pricer):
         self.data = {}
     
     def pricerredcost(self):
+        x = []
+        for i in range(len(self.data['x_vars'])):
+            x_val = self.data['mp'].getVal(self.data['x_vars'][i])
+            if x_val - EPS > 0:
+                x.append((i, x_val))
+            
+        print(f'MP sol: {x}')
         # Retrieving the dual solutions
         dual_solutions = []
         for i, c in enumerate(self.data['phi_cons']):
             dual_solutions.append(self.model.getDualsolLinear(c))
-        print('==========>>> Dual list:', [i for i in dual_solutions if i > EPS or i < -EPS])
+        # print('==========>>> Dual list:', [i for i in dual_solutions if i > EPS or i < -EPS])
         time = self.data['time_cons']
         mu = self.model.getDualsolLinear(time)
-        print('==========>>> mu:', mu)
+        # print('==========>>> mu:', mu)
         
         # Pricing problem.
         pp = Model("pp")
@@ -67,8 +235,8 @@ class AmbulancePricer(Pricer):
         # Big M constraints (link c and u).
         bigM = num_ambulances*2
         for i in range(n):
-            pp.addCons(quicksum(adj[i, bases[j]]*u_vars[j] for j in range(len(bases))) - sufficient[i] + bigM*(1-c_vars[i]) >= 0)
-            pp.addCons(quicksum(adj[i, bases[j]]*u_vars[j] for j in range(len(bases))) - sufficient[i] + 1 -bigM*c_vars[i] <= 0)
+            pp.addCons(quicksum(adj[bases[j], i]*u_vars[j] for j in range(len(bases))) - sufficient[i] + bigM*(1-c_vars[i]) >= 0)
+            pp.addCons(quicksum(adj[bases[j], i]*u_vars[j] for j in range(len(bases))) - sufficient[i] + 1 -bigM*c_vars[i] <= 0)
 
         # Constraint: Don't use more than the available number of ambulances.
         pp.addCons(quicksum(u_vars) <= num_ambulances)
@@ -79,16 +247,17 @@ class AmbulancePricer(Pricer):
         pp.optimize()
 
         objval = pp.getObjVal() # DEBUG: obj
-        print('==========>>> PP objective value:', objval)
+        print('==========>>> PP objective value, mu:', objval, mu)
 
         # Adding the column to the master problem
-        if mu-objval < -EPS: # DEBUG: obj
+        if abs(mu)-abs(objval) < -EPS: # DEBUG: obj
             print('==========>>> Generating new column')
             #currentNumVar = len(self.data['var'])
 
             # Creating new var; must set pricedVar to True
             # A new variable is created for the new pattern
-            newVar = self.model.addVar("NewPattern_", vtype = "I", pricedVar = True) # pricedVar=True says that this variable was generated by the PP
+            # TODO: put back to integer
+            newVar = self.model.addVar(f"NewPattern_{len(self.data['allocations'])}", vtype = "I", pricedVar = True) # pricedVar=True says that this variable was generated by the PP
 
             # Adding the new variable to the constraints of the master problem
             # The new pattern is created, and the demand constraints are updated
@@ -106,11 +275,10 @@ class AmbulancePricer(Pricer):
             for i in range(len(bases)):
                 coeff = round(pp.getVal(u_vars[i]))
                 newAllocation.append(coeff)
-            print('==========>>>', newAllocation)
+            # print('==========>>> allocation:', newAllocation)
 
             if newAllocation in self.data['allocations']:
                 print('==========>>> Allocation already exists!')
-                exit()
             
             # Storing the new variable in the pricer data.
             self.data['coverages'].append(newPattern)
@@ -173,10 +341,12 @@ def master_problem():
     # coverages = [utrecht.allocation_coverage(x) for x in allocations]
     
     # Objective.
-    phi = mp.addVar(name='phi', vtype='I')
+    # TODO: put back to integer
+    phi = mp.addVar(name='phi', vtype='I') # M = implicit integer
     mp.setObjective(phi, sense='maximize')
 
-    x_vars = [mp.addVar(vtype='I') for _ in allocations]
+    # TODO: put back as integer
+    x_vars = [mp.addVar(vtype='I', name=f'NewPattern_{i}') for i in range(len(allocations))]
     
     # The n constraints constraining the value of phi.
     phi_cons = []
@@ -190,13 +360,27 @@ def master_problem():
     ap = AmbulancePricer()
     mp.includePricer(ap, 'AP', '')
     ap.data['x_vars'] = x_vars
+    ap.data['mp'] = mp
     ap.data['phi_cons'] = phi_cons
     ap.data['time_cons'] = time_cons
     ap.data['allocations'] = allocations
     ap.data['coverages'] = coverages
     
     # Branching.
-    # TODO
+    branchrule = AmbulanceBranching(mp, x_vars)
+    mp.includeBranchrule(branchrule, '', '', priority=10000000, maxdepth=999, maxbounddist=1.0)
+
+    conshdlr = AmbulanceConshdlr()
+    mp.includeConshdlr(conshdlr, "", "", propfreq = 1, enfopriority = -10, chckpriority = -10)
+
+    cons = mp.createCons(conshdlr, "", modifiable=True) # modifiable since new vars will be introduced
+    cons.data = SimpleNamespace()
+    cons.data.vars = x_vars
+    cons.data.model = mp
+    mp.addPyCons(cons)
+    
+    # relax = AmbulanceRelax(mp)
+    # mp.includeRelax(relax, '', '', 10000, 1)
 
     mp.optimize()
 

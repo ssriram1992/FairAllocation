@@ -1,8 +1,9 @@
 import networkx as nx
+import random
 
 
 class Utrecht:
-    def __init__(self):
+    def __init__(self, randomize, seed):
         
         # The graph is directed since it may not take the same time to go from
         # A to B than from B to A.
@@ -30,9 +31,12 @@ class Utrecht:
         # Number of ambulances (as stated by the authors of "Improving fairness
         # in ambulance planning by time sharing").
         self.num_ambulances = 19
+
+        self.randomize = randomize
+        random.seed(seed)
         
         self.load()
-        self.build_graph()
+        self.build_graph()        
 
     def load(self):
         """Loads the data from the data/ directory and converts the postal codes
@@ -54,7 +58,13 @@ class Utrecht:
         
         # Load edges.
         with open('../data/rijtijden_ravu_rivm2009.txt', 'r') as f:
-            raw_edges = [int(i) for i in f.readline().strip('\n').split(',')[:-1]]
+            def randomize_dist(di):
+                """adds or removes 0-20% of the initial distance"""
+                diff = 0.2
+                modif = 1+random.uniform(-diff, diff)
+                return int(int(di)*modif)
+                    
+            raw_edges = [randomize_dist(i) if self.randomize else int(i) for i in f.readline().strip('\n').split(',')[:-1]]
             raw_edges = [raw_edges[i:i+len(self.V)] for i in
                          range(0, len(raw_edges), len(self.V))]
         f.close()

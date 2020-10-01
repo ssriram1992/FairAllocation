@@ -13,16 +13,19 @@ from ortools.sat.python import cp_model
 from utrecht_scip import *
 import sys
 import time
-# for i in {1..20}; do mt=`bc -l <<< $i/20`; echo $mt; python final.py $mt > 0$mt.txt; done
+# for i in {20..1}; do mt=`bc -l <<< $i/20`; echo $mt; python final.py $mt > 0$mt.txt; done
 
 
 ### PARAMETERS #################################################################
 
 EPS = 1e-6
 
+randomize_graph = True
+seed = 4
+
 # For efficiency we use the performance target for the Netherlands, i.e.,
 # that "95% of all calls should be reached within 15 minutes (900 seconds)".
-utrecht = Utrecht()
+utrecht = Utrecht(randomize_graph, seed)
 utrecht.reduce_graph(900)
 
 # Bases are the only vertices that can be allocated ambulances.
@@ -343,5 +346,6 @@ while True:
         lp_optimal = True
     coverages.append(coverage)
     allocations.append(allocation)
-    
+
+print(f'{len(allocations)},{len(mp_cuts)},{lb},{ub}')
 print(time.time()-start_time)
