@@ -1,6 +1,81 @@
 import networkx as nx
 import random
 
+import numpy as np
+
+
+def MaternProcess(lambdaParent = 60, lambdaDaughter = 5, radiusCluster = 5, plot=False):
+    """
+    Simulate a Matern point process on a rectangle.
+    Author: H. Paul Keeler, 2018.
+    https://github.com/hpaulkeeler/posts/blob/master/MaternClusterRectangle/MaternClusterRectangle.py
+    https://hpaulkeeler.com/simulating-a-matern-cluster-point-process/
+    
+    PARAMETERS:
+    ----------
+    lambdaParent   # density of parent Poisson point process
+    lambdaDaughter   # mean number of points in each cluster
+    radiusCluster   # radius of cluster disk (for daughter points)
+    """
+    # Simulation window parameters
+    xMin = 0;
+    xMax = 100;
+    yMin = 0;
+    yMax = 100;
+
+    # Extended simulation windows parameters
+    rExt = radiusCluster;  # extension parameter -- use cluster radius
+    xMinExt = xMin - rExt;
+    xMaxExt = xMax + rExt;
+    yMinExt = yMin - rExt;
+    yMaxExt = yMax + rExt;
+    # rectangle dimensions
+    xDeltaExt = xMaxExt - xMinExt;
+    yDeltaExt = yMaxExt - yMinExt;
+
+
+    # Simulate Poisson point process for the parents
+    numbPointsParent = np.random.poisson(lambdaParent);  # Poisson number of points
+    
+    # x and y coordinates of Poisson points for the parent
+    xxParent = xMinExt + xDeltaExt * np.random.uniform(0, 1, numbPointsParent);
+    yyParent = yMinExt + yDeltaExt * np.random.uniform(0, 1, numbPointsParent);
+
+    # Simulate Poisson point process for the daughters (ie final poiint process)
+    numbPointsDaughter = np.random.poisson(lambdaDaughter, numbPointsParent);
+    numbPoints = sum(numbPointsDaughter);  # total number of points
+
+    # Generate the (relative) locations in polar coordinates by
+    # simulating independent variables.
+    theta = 2 * np.pi * np.random.uniform(0, 1, numbPoints);  # angular coordinates
+    rho = radiusCluster * np.sqrt(np.random.uniform(0, 1, numbPoints));  # radial coordinates
+
+    # Convert from polar to Cartesian coordinates
+    xx0 = rho * np.cos(theta);
+    yy0 = rho * np.sin(theta);
+
+    # replicate parent points (ie centres of disks/clusters)
+    xx = np.repeat(xxParent, numbPointsDaughter);
+    yy = np.repeat(yyParent, numbPointsDaughter);
+
+    # translate points (ie parents points are the centres of cluster disks)
+    xx = xx + xx0;
+    yy = yy + yy0;
+
+    # thin points if outside the simulation window
+    booleInside = ((xx >= xMin) & (xx <= xMax) & (yy >= yMin) & (yy <= yMax));
+    # retain points inside simulation window
+    xx = xx[booleInside];  
+    yy = yy[booleInside];
+
+    # Plotting
+    if plot:
+        plt.scatter(xx, yy, c = 'blue')#, edgecolor='b', facecolor='none', alpha=0.5);
+        plt.xlabel('x');
+        plt.ylabel('y');
+        plt.axis('equal');
+    
+    return xx, yy
 
 class Utrecht:
     def __init__(self, randomize, seed):
@@ -42,47 +117,73 @@ class Utrecht:
         """Loads the data from the data/ directory and converts the postal codes
            to numbers from 0 to |V|-1.
         """
-        
-        # Load vertices.
-        with open('../data/demand_nodes.txt', 'r') as f:
-            for i in f.readlines()[1:]:
-                vertex = [float(j) for j in i.strip('\n').split('\t')]
-                vertex[0] = int(vertex[0])
-                self.V.append(vertex)
-            # Construct mapping.
-            self.pc = [j[0] for j in self.V]
-            # Replace postal code by mapped index.
-            for j in self.V:
-                j[0] = self.pc.index(j[0])
-        f.close()
-        
-        # Load edges.
-        with open('../data/rijtijden_ravu_rivm2009.txt', 'r') as f:
-            def randomize_dist(di):
-                """adds or removes 0-20% of the initial distance"""
-                diff = 0.2
-                modif = 1+random.uniform(-diff, diff)
-                return int(int(di)*modif)
-                    
-            raw_edges = [randomize_dist(i) if self.randomize else int(i) for i in f.readline().strip('\n').split(',')[:-1]]
-            raw_edges = [raw_edges[i:i+len(self.V)] for i in
-                         range(0, len(raw_edges), len(self.V))]
-        f.close()
-        for i in range(len(self.V)):
-            for j in range(len(self.V)):
-                edge = (i, j, raw_edges[i][j])
-                self.E.append(edge)
-                
-        # Load bases.
-        bases = [3436, 3447, 3561, 3582, 3608, 3645, 3707, 3811, 3823,
-                 3911, 3941, 3958, 3743, 3991, 3417, 3769, 3648, 3931]
-        for i in bases:
-            self.B.append(self.pc.index(i))
-            
-        # Load hospitals.
-        hospitals = [3584, 3435, 3543, 3582, 3813]
-        for i in hospitals:
-            self.H.append(self.pc.index(i))
+        if not self.randomize:
+            # Load vertices.
+            with open('../data/demand_nodes.txt', 'r') as f:
+                for i in f.readlines()[1:]:
+                    vertex = [float(j) for j in i.strip('\n').split('\t')]
+                    vertex[0] = int(vertex[0])
+                    self.V.append(vertex)
+                # Construct mapping.
+                self.pc = [j[0] for j in self.V]
+                # Replace postal code by mapped index.
+                for j in self.V:
+                    j[0] = self.pc.index(j[0])
+            f.close()
+
+            # Load edges.
+            with open('../data/rijtijden_ravu_rivm2009.txt', 'r') as f:
+                def randomize_dist(di):
+                    """adds or removes 0-20% of the initial distance"""
+                    diff = 0.2
+                    modif = 1+random.uniform(-diff, diff)
+                    return int(int(di)*modif)
+
+                raw_edges = [randomize_dist(i) if self.randomize else int(i) for i in f.readline().strip('\n').split(',')[:-1]]
+                raw_edges = [raw_edges[i:i+len(self.V)] for i in
+                             range(0, len(raw_edges), len(self.V))]
+            f.close()
+            for i in range(len(self.V)):
+                for j in range(len(self.V)):
+                    edge = (i, j, raw_edges[i][j])
+                    self.E.append(edge)
+
+            # Load bases.
+            bases = [3436, 3447, 3561, 3582, 3608, 3645, 3707, 3811, 3823,
+                     3911, 3941, 3958, 3743, 3991, 3417, 3769, 3648, 3931]
+            for i in bases:
+                self.B.append(self.pc.index(i))
+
+            # Load hospitals.
+            hospitals = [3584, 3435, 3543, 3582, 3813]
+            for i in hospitals:
+                self.H.append(self.pc.index(i))
+        else:
+            xx,yy = MaternProcess() # Generate clustered process
+            nV = len(xx)
+            locs = [i for i in range(nV)]
+            den = np.random.exponential(5, (nV))
+            den = den/sum(den)
+            self.V = [[i, den[i], xx[i], yy[i]] for i in range(nV)]
+            def dist (x1, y1, x2, y2):
+                """
+                Distance metric
+                """
+                # Manhattan distance
+                return abs(x1-x2)+abs(y1-y2)
+                # Asymmetric Manhattan distance
+                return abs(x1-x2)+abs(y1-y2) + 0.05*(x1-x2)
+                # Euclidean distance
+                # return np.sqrt((x1-x2)*(x1_x2) + (y1-y2)*(y1-y2))
+                # Asymmetric Euclidean distance
+                # return np.sqrt((x1-x2)*(x1_x2) + (y1-y2)*(y1-y2)) + 0.05*(x1-x2)
+
+            self.E = [(i, j, int(10*dist(xx[i], yy[i], xx[j], yy[j]))) for i in range(nV) for j in range(nV)]
+
+            # Bases
+            nBases = 18 # Or use a smart way to decide this
+            self.B = [int((i+0.5)*nV/nBases) for i in range(nBases)]
+            self.pc = locs
 
             
     def build_graph(self):
