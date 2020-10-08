@@ -21,14 +21,31 @@ Getting everything to work:
         PY_SCIP_CALL(SCIPgetPseudoBranchCands(self._scip, &pseudocands, &npseudocands, &npriopseudocands))
         return ([Variable.create(pseudocands[i]) for i in range(npseudocands)], npseudocands, npriopseudocands)
 
-5. cd to the pyscipopt folder and: pip install .
+5. cd to the pyscipopt folder and:
+
+pip install .
+
+(this will do the cpython/cython/whatever routine to update the files)
 
 6. Everything should work
 
 """
 
 """
-For this test, we want that by only using Branchrule and Conshdlr, to ensure that the value of each variable must end in zero (i.e. must be a multiple of 10)
+OBJECTIVE:
+
+This is a simple bin packing problem with no special constraints. For this simple example/test, we want to use Branchrule and Conshdlr to ensure that in the end, the value of each integer variable must end in zero (i.e. must be a multiple of 10)
+
+ISSUES:
+- In consprop(), why is the status always "unknown"? (Right now, I disabled consprop so this is irrelevant---see argument propfreq in the MP)
+- Why is conscheck() not called when the status is "optimal"?
+- We might have to change options on lines:
+
+    s.includeConshdlr()
+
+    and
+
+    cons = s.createCons(conshdlr....)
 """
 
 # Be prompted to choose the branching candidates during the solve process
@@ -52,7 +69,7 @@ except:
 
 class MustEndInZeroConshdlr(Conshdlr):
 ##########################
-# I put exit() in the functions which are not yet implemented, so that we know to implement them if needed
+# I put exit() in the functions which we have not implemented ourselves, so that we know to implement them if needed
 ###########################
     def constrans(self, sourceconstraint):
         '''sets method of constraint handler to transform constraint data into data belonging to the transformed problem '''
@@ -104,18 +121,23 @@ class MustEndInZeroConshdlr(Conshdlr):
         print("****************** CONSCHECK")
         assert len(constraints) == 1
         status = constraints[0].data.model.getStatus()
-        print(status)
-        if status == 'optimal':
-            print('solution is:', [constraints[0].data.model.getVal(i) for i in constraints[0].data.vars])
-            exit()
-            #return {"result": SCIP_RESULT.INFEASIBLE}
-        else:
-            # if the problem is not fully solved, this is infeasible
-            return {"result": SCIP_RESULT.INFEASIBLE}
+        print(f'Solution status: {status}')
+        assert status == 'unknown' # Why is the status always unknown??
+        # if status == 'optimal':
+        #     print('solution is:', [constraints[0].data.model.getVal(i) for i in constraints[0].data.vars])
+        #     exit()
+        #     #return {"result": SCIP_RESULT.INFEASIBLE}
+        # else:
+        #     # if the problem is not fully solved, this is infeasible
+        #     return {"result": SCIP_RESULT.INFEASIBLE}
+        # If we always return INFEASIBLE, then why does SCIP return an optimal solution for this problem?
+        return {"result": SCIP_RESULT.INFEASIBLE}
 
+        
     def consprop(self, constraints, nusefulconss, nmarkedconss, proptiming):
         '''calls propagation method of constraint handler '''
         print("****************** CONSPROP")
+        exit() # I disabled propfreq for now
         status = constraints[0].data.model.getStatus()
         print(status)
         if status == 'optimal':
@@ -306,8 +328,8 @@ def cuttingstock():
     s.includeBranchrule(branchrule, '', '', priority=10000000, maxdepth=999, maxbounddist=1.0)
 
     conshdlr = MustEndInZeroConshdlr()
-    s.includeConshdlr(conshdlr, "", "", propfreq = 1, enfopriority = -10, chckpriority = -10)
-    cons = s.createCons(conshdlr, "", modifiable=True) # modifiable since new vars will be introduced
+    s.includeConshdlr(conshdlr, "", "", propfreq = -1, enfopriority = -10, chckpriority = -10) # propfreq = -1 to disable it, it was at 1 before
+    cons = s.createCons(conshdlr, "", modifiable=True, local=True) # modifiable since new vars will be introduced, local=True because of: https://www.scipopt.org/doc/html/group__PublicConstraintMethods.php#ga38a9d97e56deea3042bb6348a4e90d26
     cons.data = SimpleNamespace()
     cons.data.vars = cutPatternVars
     cons.data.model = s
