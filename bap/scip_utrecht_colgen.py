@@ -6,9 +6,12 @@ import math
 
 EPS = 1e-6
 
+randomize = False
+seed = 0
+
 # For efficiency we use the performance target for the Netherlands, i.e.,
 # that "95% of all calls should be reached within 15 minutes (900 seconds)".
-utrecht = Utrecht()
+utrecht = Utrecht(randomize, seed)
 utrecht.reduce_graph(900)
 
 # Bases are the only vertices that can be allocated ambulances.
@@ -25,7 +28,7 @@ sufficient = utrecht.get_sufficient_coverage()
 # Model parameters
 num_ambulances = 20
 num_rounds = 30
-max_transition = 1 # 0 = no transition allowed, 1 = unlimited transitions
+max_transition = 0.5 # 0 = no transition allowed, 1 = unlimited transitions
 min_coverage = 0.95 # 0 = no one needs to be covered, 1 = everyone has to be covered
 max_practical_ambulances = 4 # Maximum practical number of ambulances in a zone (doesn't seem to make much of a difference). This is 4 because a base with 4 ambulances can sufficiently cover any zone no matter what its population density
 
@@ -187,6 +190,9 @@ class AmbulanceBranching(Branchrule):
     # Optional: Executes branching rule for not completely fixed pseudo solution
     def branchexecps(self, alloaddcons):
         print('==========> ENTERING BRANCHEXECPS')
+        print(f'******************* Choices: {self.model.getLPBranchCands()}')
+        print(f'******************* Open nodes: {self.model.getOpenNodes()}')
+        exit()
         return {"result": SCIP_RESULT.DIDNOTRUN}
 
 
@@ -372,7 +378,6 @@ def master_problem():
 
     conshdlr = AmbulanceConshdlr()
     mp.includeConshdlr(conshdlr, "", "", propfreq = 1, enfopriority = -10, chckpriority = -10)
-
     cons = mp.createCons(conshdlr, "", modifiable=True) # modifiable since new vars will be introduced
     cons.data = SimpleNamespace()
     cons.data.vars = x_vars
