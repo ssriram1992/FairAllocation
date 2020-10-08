@@ -51,42 +51,50 @@ except:
 
 
 class MustEndInZeroConshdlr(Conshdlr):
-
+##########################
+# I put exit() in the functions which are not yet implemented, so that we know to implement them if needed
+###########################
     def constrans(self, sourceconstraint):
         '''sets method of constraint handler to transform constraint data into data belonging to the transformed problem '''
         print("****************** CONSTRANS")
+        # Left as default for now
         return {}
 
     def consinitlp(self, constraints):
         '''calls LP initialization method of constraint handler to separate all initial active constraints '''
         print("****************** CONSINITLP")
+        # Left as default for now
         return {}
 
     def conssepalp(self, constraints, nusefulconss):
         '''calls separator method of constraint handler to separate LP solution '''
         print("****************** CONSSEPALP")
+        exit()
         return {}
 
     def conssepasol(self, constraints, nusefulconss, solution):
         '''calls separator method of constraint handler to separate given primal solution '''
         print("****************** CONSSEPASOL")
+        exit()
         return {}
 
     def consenfolp(self, constraints, nusefulconss, solinfeasible):
         '''calls enforcing method of constraint handler for LP solution for all constraints added'''
         print("****************** CONSENFOLP")
-        print('solution is:', [constraints[0].data.model.getVal(i) for i in constraints[0].data.vars])
-        """In contrast to the LP branching candidates and the pseudo branching candidates, the list of external branching candidates will not be generated automatically. The user has to add all variables to the list by calling SCIPaddExternBranchCand() for each of them. Usually, this will happen in the execution method of a relaxation handler or in the enforcement methods of a constraint handler."""
-        return {"result": SCIP_RESULT.BRANCHED}
+        # print('solution is:', [constraints[0].data.model.getVal(i) for i in constraints[0].data.vars])
+        # We assume that any LP solution is feasible, since infeasibility is determined only once all variables are integer
+        return {"result": SCIP_RESULT.FEASIBLE}
 
     def consenforelax(self, solution, constraints, nusefulconss, solinfeasible):
         '''calls enforcing method of constraint handler for a relaxation solution for all constraints added'''
         print("****************** CONSENFORELAX")
+        exit()
         return {}
 
     def consenfops(self, constraints, nusefulconss, solinfeasible, objinfeasible):
         '''calls enforcing method of constraint handler for pseudo solution for all constraints added'''
         print("****************** CONSENFOPS")
+        exit()
         return {}
 
     def conscheck(self, constraints, solution, checkintegrality, checklprows, printreason, completely):
@@ -113,28 +121,32 @@ class MustEndInZeroConshdlr(Conshdlr):
         if status == 'optimal':
             print('solution is:', [constraints[0].data.model.getVal(i) for i in constraints[0].data.vars])
             exit()
-        return {"result": SCIP_RESULT.DIDNOTRUN}
+        return {}#"result": SCIP_RESULT.DIDNOTRUN}
 
     def conspresol(self, constraints, nrounds, presoltiming,
                    nnewfixedvars, nnewaggrvars, nnewchgvartypes, nnewchgbds, nnewholes,
                    nnewdelconss, nnewaddconss, nnewupgdconss, nnewchgcoefs, nnewchgsides, result_dict):
         '''calls presolving method of constraint handler '''
         print("****************** CONSPRESOL")
+        # Left as default for now
         return result_dict
 
     def consresprop(self):
         '''sets propagation conflict resolving method of constraint handler '''
         print("****************** CONSRESPROP")
+        exit()
         return {}
 
     def conslock(self, constraint, locktype, nlockspos, nlocksneg):
         '''variable rounding lock method of constraint handler'''
         print("****************** CONSLOCK")
+        # Left as default for now
         return {}
 
     def consgetnvars(self, constraint):
         '''sets constraint variable number getter method of constraint handler '''
         print("****************** CONSGETNVARS")
+        # Left as default for now
         return {}
 
 
@@ -163,7 +175,6 @@ class CutBranching(Branchrule):
     # Optional: Executes branching rule for external branching candidates
     def branchexecext(self, alloaddcons):
         print('********** branchexecext')
-        print('EXITING')
         exit()
 
     # Optional: Executes branching rule for not completely fixed pseudo solution
