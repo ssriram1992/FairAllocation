@@ -20,8 +20,8 @@ import time
 
 EPS = 1e-6
 
-randomize_graph = True
-seed = 4
+randomize_graph = False
+seed = 0
 
 # For efficiency we use the performance target for the Netherlands, i.e.,
 # that "95% of all calls should be reached within 15 minutes (900 seconds)".
@@ -185,7 +185,8 @@ def cp_solve(V, E, col_cov, cuts=[]):
 
     Returns:
       - Objective value of the best Hamiltonian path, -1 if there is no
-        Hamiltonian path, -2 if the graph is not connected.
+        Hamiltonian path, -2 if the graph is not connected (this latter case
+        has been removed).
       - A feasible solution for this objective value.
     """
     num_cols = len(V)
@@ -196,9 +197,9 @@ def cp_solve(V, E, col_cov, cuts=[]):
     G = networkx.Graph()
     G.add_nodes_from(V)
     G.add_edges_from(E)
-    # If the graph is not connected, no Hamiltonian path can exist.
-    if not networkx.is_connected(G):
-        return -2, []
+    # # If the graph is not connected, no Hamiltonian path can exist.
+    # if not networkx.is_connected(G):
+    #     return -2, []
 
     # Variables.
     model = cp_model.CpModel()
@@ -239,7 +240,9 @@ def cp_solve(V, E, col_cov, cuts=[]):
     arcs = [(dummy, i, i) for i in V]
     for e in E:
         arcs.append((e[0], e[1], e[1]))
-    model.AddAutomaton(x, start, end, arcs)
+    # If there is only one vertex then a Hamiltonian path exists.
+    if len(V) > 1:
+        model.AddAutomaton(x, start, end, arcs)
 
     # Solve the model.
     solver = cp_model.CpSolver()
