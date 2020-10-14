@@ -128,7 +128,7 @@ def pricing_problem(duals, mu):
     return allocation, coverage
 
 
-def master_problem(cuts, integrality=False):
+def master_problem(cuts, lb=0, ub=num_rounds, integrality=False):
     """Creates and solves the master problem.
 
     Args:
@@ -144,12 +144,16 @@ def master_problem(cuts, integrality=False):
     var_type=gp.GRB.INTEGER if integrality else gp.GRB.CONTINUOUS
     
     # Objective.
-    phi = mp.addVar(name='phi', vtype=var_type)
-    mp.setObjective(phi, gp.GRB.MAXIMIZE)
+    phi_high = mp.addVar(name='phi_high', vtype=gp.GRB.CONTINUOUS)
+    phi_low = mp.addVar(name='phi_low', vtype=gp.GRB.CONTINUOUS)
+    phi = mp.addVar(name='phi', vtype=gp.GRB.CONTINUOUS)
+    mp.addConstr(phi == phi_high-phi_low)
+    mp.setObjective(phi, gp.GRB.MINIMIZE)
     x_vars = mp.addVars(len(allocations), vtype=var_type, name='x')
 
     # The n constraints constraining the value of phi.
-    mp.addConstrs((gp.quicksum(coverages[j][i]*x_vars[j] for j in range(len(allocations))) - phi >= 0 for i in range(n)), name='phi')
+    mp.addConstrs((gp.quicksum(coverages[j][i]*x_vars[j] for j in range(len(allocations))) <= phi_high for i in range(n)), name='phi_high_cstr')
+    mp.addConstrs((gp.quicksum(coverages[j][i]*x_vars[j] for j in range(len(allocations))) >= phi_low for i in range(n)), name='phi_low_cstr')
 
     # Add the CP-generated cuts.
     for cut in cuts:
@@ -165,13 +169,14 @@ def master_problem(cuts, integrality=False):
         duals = None
         mu = None
     if not integrality:
-        duals = [mp.getConstrByName(c).Pi for c in [f'phi[{i}]' for i in range(n)]]
+        duals_low = [mp.getConstrByName(c).Pi for c in [f'phi_low_cstr[{i}]' for i in range(n)]]
+        duals_high = [mp.getConstrByName(c).Pi for c in [f'phi_high_cstr[{i}]' for i in range(n)]]
         mu = mp.getConstrByName('time').Pi
 
     obj = mp.getObjective().getValue()
     x_res = [mp.getVarByName('x['+str(i)+']').X for i in range(len(allocations))]
     
-    return obj, x_res, duals, mu
+    return obj, x_res, [sum([-x[0], -x[1]]) for x in zip(duals_low, duals_high)], mu
 
 
 def cp_solve(V, E, col_cov, cuts=[]):
@@ -185,8 +190,8 @@ def cp_solve(V, E, col_cov, cuts=[]):
 
     Returns:
       - Objective value of the best Hamiltonian path, -1 if there is no
-        Hamiltonian path, -2 if the graph is not connected (this latter case
-        has been removed).
+        Hamiltonian path within the LB/UB limits, -2 if the graph is not
+        connected (this latter case has been removed).
       - A feasible solution for this objective value.
     """
     num_cols = len(V)
@@ -223,13 +228,17 @@ def cp_solve(V, E, col_cov, cuts=[]):
         model.Add(sum(x_occs[i] for i in range(num_cols) if i in cut) <= num_rounds-1)
 
     # Objective.
-    phi = model.NewIntVar(int(lb), math.floor(ub), 'phi')
+    phi = model.NewIntVar(int(lb), math.floor(ub)-1, 'phi')
     coverages = [model.NewIntVar(0, num_rounds, 'c'+str(i))
                  for i in range(num_zones)]
     for i in range(num_zones):
         model.Add(cp_model.LinearExpr.ScalProd(x_occs, col_cov[i]) == coverages[i])
-    model.AddMinEquality(phi, coverages)
-    model.Maximize(phi)
+    phi_low = model.NewIntVar(0, num_rounds, 'phi_low')
+    phi_high = model.NewIntVar(0, num_rounds, 'phi_high')
+    model.AddMinEquality(phi_low, coverages)
+    model.AddMaxEquality(phi_high, coverages)
+    model.Add(phi == phi_high-phi_low)
+    model.Minimize(phi)
 
     # Regular constraint (Hamiltonian path).
     # For the initial state, we use a dummy node which is connected to
@@ -267,19 +276,19 @@ coverages = [coverage]
 
 mp_cuts = []
 lb = 0
-ub = math.inf
+ub = num_rounds+1
 lp_optimal = False
 lp_obj = -1
 while True:
     if time.time() - start_time > time_limit:
         break
     if lp_optimal and mp_integer:
-        obj, x_res, duals, mu = master_problem(mp_cuts, True)
+        obj, x_res, duals, mu = master_problem(mp_cuts, lb, ub, True)
     else:
-        obj, x_res, duals, mu = master_problem(mp_cuts, False)
+        obj, x_res, duals, mu = master_problem(mp_cuts, lb, ub, False)
         lp_obj = obj
     if lp_optimal:
-        ub = math.floor(obj)
+        lb = math.ceil(obj)
 
     if verbose:
         print(f'LP obj: {round(lp_obj, 2)},\tLB: {lb},\tUB: {ub},\t{len(x_res)} columns,\t{len(mp_cuts)} cuts')
@@ -316,30 +325,36 @@ while True:
                     E.append((V0[j], V0[i]))
 
         # Get the coverages of the subset of columns which take nonzero values.
-        c = [coverages[i] for i in range(len(coverage)) if i in V]
+        c = [coverages[i] for i in range(len(coverages)) if i in V]
         c = [list(x) for x in zip(*c)]
 
         # Solve the CP model.
         cp_obj, cp_sol = cp_solve(V0, E, c, cp_cuts)
-        lb = max(lb, cp_obj)
         if verbose:
             if cp_obj == -2:
                 print(f'CP solution infeasible: Graph is not connected.')
             elif cp_obj == -1:
-                print(f'CP solution infeasible: Graph is connected, but contains no Hamiltonian path.')
+                print(f'CP solution infeasible: Graph is connected, but contains no Hamiltonian path within the LB/UB limits.')
             else:
                 print(f'CP solution is feasible with value {cp_obj}.')
+                lb = min(lb, cp_obj)
 
-        if cp_obj < math.floor(ub):
+        if cp_obj > math.ceil(lb):
             lp_optimal = False
             mp_cuts.append(V)
+            ub = min(cp_obj, ub)
             continue
         else:
+            # If the CP model outputs an infeasible solution, add the cut and continue
+            if cp_obj == -1:
+                lp_optimal = False
+                mp_cuts.append(V)
+                continue
             check_allocations = []
             for i in cp_sol:
                 check_allocations.append(allocations[V[V0[i]]])
-            check_value = min(utrecht.allocations_coverage(check_allocations))
-            assert check_value == ub
+            check_value = max(utrecht.allocations_coverage(check_allocations))-min(utrecht.allocations_coverage(check_allocations))
+            assert check_value == lb, f'{check_value} vs {lb}'
             print('Optimality is proven.')
             break
     
