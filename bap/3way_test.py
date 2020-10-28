@@ -1,43 +1,55 @@
-from pyscipopt import *#Model, Pricer, SCIP_RESULT, SCIP_PARAMSETTING, quicksum, Branchrule
+from pyscipopt import *
 
 """
-Getting everything to work:
-1. Create a virtual environment in a folder
-2. Download pyscipopt from github and extract it inside the virtual environment folder
+===================
+GETTING THIS TO RUN
+===================
+
+1. Create a virtual environment in a folder.
+2. Download pyscipopt from github and extract it inside the virtual environment folder.
 3. In src/scip.pxd, add the line:
 
-    int SCIPgetNPseudoBranchCands(SCIP* scip)
+     int SCIPgetNPseudoBranchCands(SCIP* scip)
 
    before the line:
 
-    SCIP_RETCODE SCIPgetPseudoBranchCands(SCIP* scip, SCIP_VAR*** pseudocands, int* npseudocands, int* npriopseudocands)
+     SCIP_RETCODE SCIPgetPseudoBranchCands(SCIP* scip, SCIP_VAR*** pseudocands, int* npseudocands, int* npriopseudocands)
+
 4. In src/scip.pyx, after the definition of getLPBranchCands(), add the function:
 
-    def getPseudoBranchCands(self):
-        cdef int ncands
-        cdef int npseudocands
-        cdef int npriopseudocands
-        cdef SCIP_VAR** pseudocands
-        PY_SCIP_CALL(SCIPgetPseudoBranchCands(self._scip, &pseudocands, &npseudocands, &npriopseudocands))
-        return ([Variable.create(pseudocands[i]) for i in range(npseudocands)], npseudocands, npriopseudocands)
+     def getPseudoBranchCands(self):
+         cdef int ncands
+         cdef int npseudocands
+         cdef int npriopseudocands
+         cdef SCIP_VAR** pseudocands
+         PY_SCIP_CALL(SCIPgetPseudoBranchCands(self._scip, &pseudocands, &npseudocands, &npriopseudocands))
+         return ([Variable.create(pseudocands[i]) for i in range(npseudocands)], npseudocands, npriopseudocands)
 
 5. cd to the pyscipopt folder and:
 
-pip install .
+     pip install .
 
-(this will do the cpython/cython/whatever routine to update the files)
+   (this will do the cython routine to update the files)
 
-6. Everything should work
+6. Everything should work.
 
-"""
 
-"""
-OBJECTIVE:
+=======================
+OBJECTIVE OF THIS MODEL
+=======================
 
-This is a simple bin packing problem with no special constraints. For this simple example/test, we want to use Branchrule and Conshdlr to ensure that in the end, the value of each integer variable must end in zero (i.e. must be a multiple of 10)
+This is a simple bin packing problem with column generation and branch and price (I merged the two examples cutstock.py and test_branch_probing_lp.py).
+
+I want to do two things:
+1. When branching reaches an integer node, I want to check if that node is feasible with regard to a "special c"
+
+3-way branching
+
+
+ For this simple example/test, we want to use Branchrule and Conshdlr to ensure that in the end, the value of each integer variable must end in zero (i.e. must be a multiple of 10)
 
 ISSUES:
-- In consprop(), why is the status always "unknown"? (Right now, I disabled consprop so this is irrelevant---see argument propfreq in the MP)
+- In consprop(), why is the status always "unknown"? (Right now, I disabled consprop so this is irrelevant---see argument propfreq in the MP. Edit: consprop can be disabled altogether at the line where the constraint handler is added to the MP)
 - Why is conscheck() not called when the status is "optimal"?
 - We might have to change options on lines:
 
@@ -98,6 +110,9 @@ class MustEndInZeroConshdlr(Conshdlr):
     def consenfolp(self, constraints, nusefulconss, solinfeasible):
         '''calls enforcing method of constraint handler for LP solution for all constraints added'''
         print("****************** CONSENFOLP")
+        # status = constraints[0].data.model.getStatus()
+        # print(status)
+        # input()
         # print('solution is:', [constraints[0].data.model.getVal(i) for i in constraints[0].data.vars])
         # We assume that any LP solution is feasible, since infeasibility is determined only once all variables are integer
         return {"result": SCIP_RESULT.FEASIBLE}
@@ -121,16 +136,25 @@ class MustEndInZeroConshdlr(Conshdlr):
         print("****************** CONSCHECK")
         assert len(constraints) == 1
         status = constraints[0].data.model.getStatus()
+        def is_int_sol():
+            v = [constraints[0].data.model.getVal(i) for i in constraints[0].data.vars]
+            for x in v:
+                if not x.is_integer():
+                    return
+            print([x for x in v if x.is_integer()])
+            exit()
+            
         print(f'Solution status: {status}')
-        assert status == 'unknown' # Why is the status always unknown??
-        # if status == 'optimal':
-        #     print('solution is:', [constraints[0].data.model.getVal(i) for i in constraints[0].data.vars])
-        #     exit()
-        #     #return {"result": SCIP_RESULT.INFEASIBLE}
-        # else:
-        #     # if the problem is not fully solved, this is infeasible
-        #     return {"result": SCIP_RESULT.INFEASIBLE}
-        # If we always return INFEASIBLE, then why does SCIP return an optimal solution for this problem?
+        if status != 'unknown':
+            is_int_sol()
+        if status == 'optimal':
+            print('solution is:', [constraints[0].data.model.getVal(i) for i in constraints[0].data.vars])
+            #exit()
+            return {"result": SCIP_RESULT.INFEASIBLE}
+        else:
+            # if the problem is not fully solved, this is infeasible
+            return {"result": SCIP_RESULT.INFEASIBLE}
+
         return {"result": SCIP_RESULT.INFEASIBLE}
 
         
@@ -183,6 +207,7 @@ class CutBranching(Branchrule):
     def branchexeclp(self, allowaddcons):
         print('********** branchexeclp')
         print(f'Choices: {self.model.getLPBranchCands()}')
+        # self.model.getObjVal()
         if manual:
             choice = input('Choose branching variable: ')
             choice = int(choice)
@@ -203,6 +228,7 @@ class CutBranching(Branchrule):
     def branchexecps(self, alloaddcons):
         print('********** branchexecps')
         print(f'Choices: {[(i, i.getLPSol()) for i in self.model.getPseudoBranchCands()[0]]}')
+        exit()
         if manual:
             choice = input('Choose branching variable: ')
             choice = int(choice)
@@ -325,10 +351,40 @@ def cuttingstock():
 
     # Add the branching rule to the MP
     branchrule = CutBranching(s, cutPatternVars)
-    s.includeBranchrule(branchrule, '', '', priority=10000000, maxdepth=999, maxbounddist=1.0)
+    s.includeBranchrule(branchrule, '', '', priority=10000000, maxdepth=65534, maxbounddist=1.0)
 
     conshdlr = MustEndInZeroConshdlr()
-    s.includeConshdlr(conshdlr, "", "", propfreq = -1, enfopriority = -10, chckpriority = -10) # propfreq = -1 to disable it, it was at 1 before
+# sepapriority: priority for separation (Default value = 0)
+# enfopriority: priority for constraint enforcing (Default value = 0)
+# chckpriority: priority for checking feasibility (Default value = 0)
+# sepafreq: frequency for separating cuts; 0 = only at root node (Default value = -1)
+# propfreq: frequency for propagating domains; 0 = only preprocessing propagation (Default value = -1)
+# eagerfreq: frequency for using all instead of only the useful constraints in separation, propagation and enforcement; -1 = no eager evaluations, 0 = first only (Default value = 100)
+# maxprerounds: maximal number of presolving rounds the constraint handler participates in (Default value = -1)
+# delaysepa: should separation method be delayed, if other separators found cuts? (Default value = False)
+# delayprop: should propagation method be delayed, if other propagators found reductions? (Default value = False)
+# needscons: should the constraint handler be skipped, if no constraints are available? (Default value = True)
+# proptiming: positions in the node solving loop where propagation method of constraint handlers should be executed (Default value = SCIP_PROPTIMING.BEFORELP)
+# presoltiming: timing mask of the constraint handler's presolving method (Default value = SCIP_PRESOLTIMING.MEDIUM)
+    s.includeConshdlr(conshdlr, "", "",
+                      sepapriority = 0,
+                      enfopriority = 0,
+                      chckpriority = 0,
+                      sepafreq = -1,
+                      propfreq = -1,
+                      eagerfreq = -1,
+                      maxprerounds = -1,
+                      delaysepa = False,
+                      delayprop = False,
+                      needscons = False,
+                      proptiming = SCIP_PROPTIMING.BEFORELP,
+                      presoltiming = SCIP_PRESOLTIMING.MEDIUM)
+
+                      # sepapriority = 0,
+                      # propfreq = -1,
+                      # enfopriority = 1,
+                      # chckpriority = 1)
+
     cons = s.createCons(conshdlr, "", modifiable=True, local=True) # modifiable since new vars will be introduced, local=True because of: https://www.scipopt.org/doc/html/group__PublicConstraintMethods.php#ga38a9d97e56deea3042bb6348a4e90d26
     cons.data = SimpleNamespace()
     cons.data.vars = cutPatternVars
