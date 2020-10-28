@@ -3,6 +3,7 @@ import numpy
 from pyscipopt import *#Model, Pricer, SCIP_RESULT, SCIP_PARAMSETTING, quicksum, Branchrule
 from utrecht_scip import *
 import math
+from ortools.sat.python import cp_model
 
 EPS = 1e-6
 
@@ -47,153 +48,331 @@ except:
         def __eq__(self, other):
             return self.__dict__ == other.__dict__
 
+allocations = []
+coverages = []
+def has_hamiltonian_path(V, E, col_cov, num_times):
+    """Checks if a hamiltonian path exists
+    
+    Args:
+      V: List of vertices (columns).
+      E: List of edges (if a transition between two columns is allowed).
+      col_cov: Matrix of the zone coverages of the columns (c[i][j] == 1 if
+               zone i is covered by column j).
+      num_times: number of times the variable is in the solution
+
+    Returns: True/False
+    """
+    num_cols = len(V)
+    num_zones = len(col_cov)
+    
+    # First, check if the graph is disconnected (in which case no
+    # Hamiltonian path exists).
+    G = networkx.Graph()
+    G.add_nodes_from(V)
+    G.add_edges_from(E)
+    # # If the graph is not connected, no Hamiltonian path can exist.
+    if not networkx.is_connected(G):
+        return False
+
+    # Variables.
+    model = cp_model.CpModel()
+    x = [model.NewIntVar(0, num_cols-1, 'x'+str(i)) for i in range(num_rounds)]
+
+    # Alternative for GCC, since the constraint is not available in OR-Tools.
+    x_occs = []
+    #print('num_times', num_times)
+    for i in range(num_cols):
+        occs = []
+        for j in range(num_rounds):
+            boolvar = model.NewBoolVar('')
+            model.Add(x[j] == i).OnlyEnforceIf(boolvar)
+            model.Add(x[j] != i).OnlyEnforceIf(boolvar.Not())
+            occs.append(boolvar)
+        x_occs.append(sum(occs))
+        # Every var must be used the correct number of times
+        model.Add(x_occs[i] == int(num_times[i]))
+
+    # # Objective.
+    # phi = model.NewIntVar(int(lb), math.floor(ub)-1, 'phi')
+    # coverages = [model.NewIntVar(0, num_rounds, 'c'+str(i))
+    #              for i in range(num_zones)]
+    # for i in range(num_zones):
+    #     model.Add(cp_model.LinearExpr.ScalProd(x_occs, col_cov[i]) == coverages[i])
+    # phi_low = model.NewIntVar(0, num_rounds, 'phi_low')
+    # phi_high = model.NewIntVar(0, num_rounds, 'phi_high')
+    # model.AddMinEquality(phi_low, coverages)
+    # model.AddMaxEquality(phi_high, coverages)
+    # model.Add(phi == phi_high-phi_low)
+    # model.Minimize(phi)
+
+    # Regular constraint (Hamiltonian path).
+    # For the initial state, we use a dummy node which is connected to
+    # all other nodes.
+    dummy = max(V)+1
+    start = dummy
+    end = V
+    arcs = [(dummy, i, i) for i in V]
+    for e in E:
+        arcs.append((e[0], e[1], e[1]))
+    # If there is only one vertex then a Hamiltonian path exists.
+    if len(V) > 1:
+        model.AddAutomaton(x, start, end, arcs)
+
+    # Solve the model.
+    solver = cp_model.CpSolver()
+    status = solver.Solve(model)
+    assert status == cp_model.OPTIMAL or status == cp_model.INFEASIBLE
+
+    if status == cp_model.OPTIMAL:
+        return True
+    elif status == cp_model.INFEASIBLE:
+        return False
+
+        
 
 class AmbulanceConshdlr(Conshdlr):
-
-    def constrans(self, sourceconstraint):
-        '''sets method of constraint handler to transform constraint data into data belonging to the transformed problem '''
-        print("****************** CONSTRANS")
-        return {}
-
-    def consinitlp(self, constraints):
-        '''calls LP initialization method of constraint handler to separate all initial active constraints '''
-        print("****************** CONSINITLP")
-        return {}
-
-    def conssepalp(self, constraints, nusefulconss):
-        '''calls separator method of constraint handler to separate LP solution '''
-        print("****************** CONSSEPALP")
-        return {}
-
-    def conssepasol(self, constraints, nusefulconss, solution):
-        '''calls separator method of constraint handler to separate given primal solution '''
-        print("****************** CONSSEPASOL")
-        return {}
-
     def consenfolp(self, constraints, nusefulconss, solinfeasible):
         '''calls enforcing method of constraint handler for LP solution for all constraints added'''
-        print("****************** CONSENFOLP")
-        print('solution is:', [constraints[0].data.model.getVal(i) for i in constraints[0].data.vars])
-        """In contrast to the LP branching candidates and the pseudo branching candidates, the list of external branching candidates will not be generated automatically. The user has to add all variables to the list by calling SCIPaddExternBranchCand() for each of them. Usually, this will happen in the execution method of a relaxation handler or in the enforcement methods of a constraint handler."""
-        return {"result": SCIP_RESULT.BRANCHED}
+        # We assume that any LP solution is feasible, since infeasibility is determined only once all variables are integer
+        print("===> Entering consenfolp()")
+        s = self.model
+        vars = s.getVars(transformed=True) # TRANSFORMED=TRUE??
+        # Check that all the vars are fixed; if one of them is not return FEASIBLE
+        for v in vars:
+            if v.getUbLocal()-v.getLbLocal() > 0.5:
+                return {"result": SCIP_RESULT.FEASIBLE}
 
-    def consenforelax(self, solution, constraints, nusefulconss, solinfeasible):
-        '''calls enforcing method of constraint handler for a relaxation solution for all constraints added'''
-        print("****************** CONSENFORELAX")
-        return {}
+        # Now we know all vars are fixed, let's see if there is a hamiltonian path
+        for v in vars:
+            values = [v.getUbLocal() for v in vars]
+        V = [i for i in range(len(values)) if values[i] > 0]
+        values = [values[i] for i in range(len(values)) if values[i] > 0]
+        V0 = [i for i in range(len(V))]
+        E = []
+        for i in range(len(V0)-1):
+            for j in range(i+1, len(V0)):
+                a1 = allocations[V[V0[i]]]
+                a2 = allocations[V[V0[j]]]
+                # Maximum number of ambulances that can transition between two configurations.
+                max_amb = math.floor(num_ambulances*max_transition)
+                a_diff = [abs(a1[x]-a2[x]) for x in range(len(a1))]
+                if sum(a_diff)/2 < max_amb:
+                    E.append((V0[i], V0[j]))
+                    E.append((V0[j], V0[i]))
+        # Get the coverages of the subset of columns which take nonzero values.
+        c = [coverages[i] for i in range(len(coverages)) if i in V]
+        c = [list(x) for x in zip(*c)]
+        if has_hamiltonian_path(V0, E, c, values):
+            return {"result": SCIP_RESULT.FEASIBLE}
+        else:
+            return {"result": SCIP_RESULT.CUTOFF}
 
     def consenfops(self, constraints, nusefulconss, solinfeasible, objinfeasible):
-        '''calls enforcing method of constraint handler for pseudo solution for all constraints added'''
-        print("****************** CONSENFOPS")
-        return {}
+        print("===> Entering consenfops()")
+        s = self.model
+        vars = s.getVars(transformed=True) # TRANSFORMED=TRUE??
+        # Check that all the vars are fixed; if one of them is not return FEASIBLE
+        for v in vars:
+            if v.getUbLocal()-v.getLbLocal() > 0.5:
+                return {"result": SCIP_RESULT.FEASIBLE}
+
+        # Now we know all vars are fixed, let's see if there is a hamiltonian path
+        for v in vars:
+            values = [v.getUbLocal() for v in vars]
+        V = [i for i in range(len(values)) if values[i] > 0]
+        values = [values[i] for i in range(len(values)) if values[i] > 0]
+        V0 = [i for i in range(len(V))]
+        E = []
+        for i in range(len(V0)-1):
+            for j in range(i+1, len(V0)):
+                a1 = allocations[V[V0[i]]]
+                a2 = allocations[V[V0[j]]]
+                # Maximum number of ambulances that can transition between two configurations.
+                max_amb = math.floor(num_ambulances*max_transition)
+                a_diff = [abs(a1[x]-a2[x]) for x in range(len(a1))]
+                if sum(a_diff)/2 < max_amb:
+                    E.append((V0[i], V0[j]))
+                    E.append((V0[j], V0[i]))
+        # Get the coverages of the subset of columns which take nonzero values.
+        c = [coverages[i] for i in range(len(coverages)) if i in V]
+        c = [list(x) for x in zip(*c)]
+        if has_hamiltonian_path(V0, E, c, values):
+            return {"result": SCIP_RESULT.FEASIBLE}
+        else:
+            return {"result": SCIP_RESULT.CUTOFF}
 
     def conscheck(self, constraints, solution, checkintegrality, checklprows, printreason, completely):
-        '''calls feasibility check method of constraint handler '''
-        # if the solution is not integer then it is valid by default, since we only check integer solutions
-        # check for hamiltonian path
-        print("****************** CONSCHECK")
+        print("===> Entering conscheck()")
         assert len(constraints) == 1
-        print('solution is:', [constraints[0].data.model.getVal(i) for i in constraints[0].data.vars])
-        return {"result": SCIP_RESULT.INFEASIBLE}
+        s = self.model
+        vars = s.getVars(transformed=True) # TRANSFORMED=TRUE??
+        # Check that all the vars are fixed; if one of them is not return FEASIBLE
+        for v in vars:
+            if v.getUbLocal()-v.getLbLocal() > 0.5:
+                return {"result": SCIP_RESULT.FEASIBLE}
 
-    def consprop(self, constraints, nusefulconss, nmarkedconss, proptiming):
-        '''calls propagation method of constraint handler '''
-        print("****************** CONSPROP")
-        return {}
+        # Now we know all vars are fixed, let's see if there is a hamiltonian path
+        for v in vars:
+            values = [v.getUbLocal() for v in vars]
+        V = [i for i in range(len(values)) if values[i] > 0]
+        values = [values[i] for i in range(len(values)) if values[i] > 0]
+        V0 = [i for i in range(len(V))]
+        E = []
+        for i in range(len(V0)-1):
+            for j in range(i+1, len(V0)):
+                a1 = allocations[V[V0[i]]]
+                a2 = allocations[V[V0[j]]]
+                # Maximum number of ambulances that can transition between two configurations.
+                max_amb = math.floor(num_ambulances*max_transition)
+                a_diff = [abs(a1[x]-a2[x]) for x in range(len(a1))]
+                if sum(a_diff)/2 < max_amb:
+                    E.append((V0[i], V0[j]))
+                    E.append((V0[j], V0[i]))
+        # Get the coverages of the subset of columns which take nonzero values.
+        c = [coverages[i] for i in range(len(coverages)) if i in V]
+        c = [list(x) for x in zip(*c)]
+        if has_hamiltonian_path(V0, E, c, values):
+            return {"result": SCIP_RESULT.FEASIBLE}
+        else:
+            return {"result": SCIP_RESULT.INFEASIBLE}
+
+        #     if hampath:
+        #         return feas
+        #     else:
+        #         return infeas
+        #     if s.getSolVal(solution, v) % 1 != 0:# TODOOOOOOOOOOOOOOOOOO HERE FUNCTION TO CHECK IF HAM PATH
+        #         return {"result": SCIP_RESULT.INFEASIBLE}
+        # return {"result": SCIP_RESULT.FEASIBLE}
 
     def conspresol(self, constraints, nrounds, presoltiming,
                    nnewfixedvars, nnewaggrvars, nnewchgvartypes, nnewchgbds, nnewholes,
                    nnewdelconss, nnewaddconss, nnewupgdconss, nnewchgcoefs, nnewchgsides, result_dict):
-        '''calls presolving method of constraint handler '''
-        print("****************** CONSPRESOL")
         return result_dict
 
-    def consresprop(self):
-        '''sets propagation conflict resolving method of constraint handler '''
-        print("****************** CONSRESPROP")
-        return {}
 
-    def conslock(self, constraint, locktype, nlockspos, nlocksneg):
-        '''variable rounding lock method of constraint handler'''
-        print("****************** CONSLOCK")
-        return {}
-
-    def consgetnvars(self, constraint):
-        '''sets constraint variable number getter method of constraint handler '''
-        print("****************** CONSGETNVARS")
-        return {}
-
-
-# class AmbulanceRelax(Relax):
-#     def __init__(self):
-#         pass
     
-#     def relaxfree(self):
-#         print('calls destructor and frees memory of relaxation handler')
+    # def constrans(self, sourceconstraint):
+    #     '''sets method of constraint handler to transform constraint data into data belonging to the transformed problem '''
+    #     print("****************** CONSTRANS")
+    #     return {}
 
-#     def relaxinit(self):
-#         print('initializes relaxation handler')
+    # def consinitlp(self, constraints):
+    #     '''calls LP initialization method of constraint handler to separate all initial active constraints '''
+    #     print("****************** CONSINITLP")
+    #     return {}
 
-#     def relaxexit(self):
-#         print('calls exit method of relaxation handler')
+    # def conssepalp(self, constraints, nusefulconss):
+    #     '''calls separator method of constraint handler to separate LP solution '''
+    #     print("****************** CONSSEPALP")
+    #     return {}
 
-#     def relaxinitsol(self):
-#         print('informs relaxaton handler that the branch and bound process is being started')
+    # def conssepasol(self, constraints, nusefulconss, solution):
+    #     '''calls separator method of constraint handler to separate given primal solution '''
+    #     print("****************** CONSSEPASOL")
+    #     return {}
 
-#     def relaxexitsol(self):
-#         print('informs relaxation handler that the branch and bound process data is being freed')
-        
-#     def relaxexec(self):
-#         print("python error in relaxexec: this method needs to be implemented")
-#         return{}
+    # def consenfolp(self, constraints, nusefulconss, solinfeasible):
+    #     '''calls enforcing method of constraint handler for LP solution for all constraints added'''
+    #     print("****************** CONSENFOLP")
+    #     print('solution is:', [constraints[0].data.model.getVal(i) for i in constraints[0].data.vars])
+    #     """In contrast to the LP branching candidates and the pseudo branching candidates, the list of external branching candidates will not be generated automatically. The user has to add all variables to the list by calling SCIPaddExternBranchCand() for each of them. Usually, this will happen in the execution method of a relaxation handler or in the enforcement methods of a constraint handler."""
+    #     return {"result": SCIP_RESULT.BRANCHED}
+
+    # def consenforelax(self, solution, constraints, nusefulconss, solinfeasible):
+    #     '''calls enforcing method of constraint handler for a relaxation solution for all constraints added'''
+    #     print("****************** CONSENFORELAX")
+    #     return {}
+
+    # def consenfops(self, constraints, nusefulconss, solinfeasible, objinfeasible):
+    #     '''calls enforcing method of constraint handler for pseudo solution for all constraints added'''
+    #     print("****************** CONSENFOPS")
+    #     return {}
+
+    # def conscheck(self, constraints, solution, checkintegrality, checklprows, printreason, completely):
+    #     '''calls feasibility check method of constraint handler '''
+    #     # if the solution is not integer then it is valid by default, since we only check integer solutions
+    #     # check for hamiltonian path
+    #     print("****************** CONSCHECK")
+    #     assert len(constraints) == 1
+    #     print('solution is:', [constraints[0].data.model.getVal(i) for i in constraints[0].data.vars])
+    #     return {"result": SCIP_RESULT.INFEASIBLE}
+
+    # def consprop(self, constraints, nusefulconss, nmarkedconss, proptiming):
+    #     '''calls propagation method of constraint handler '''
+    #     print("****************** CONSPROP")
+    #     return {}
+
+    # def conspresol(self, constraints, nrounds, presoltiming,
+    #                nnewfixedvars, nnewaggrvars, nnewchgvartypes, nnewchgbds, nnewholes,
+    #                nnewdelconss, nnewaddconss, nnewupgdconss, nnewchgcoefs, nnewchgsides, result_dict):
+    #     '''calls presolving method of constraint handler '''
+    #     print("****************** CONSPRESOL")
+    #     return result_dict
+
+    # def consresprop(self):
+    #     '''sets propagation conflict resolving method of constraint handler '''
+    #     print("****************** CONSRESPROP")
+    #     return {}
+
+    # def conslock(self, constraint, locktype, nlockspos, nlocksneg):
+    #     '''variable rounding lock method of constraint handler'''
+    #     print("****************** CONSLOCK")
+    #     return {}
+
+    # def consgetnvars(self, constraint):
+    #     '''sets constraint variable number getter method of constraint handler '''
+    #     print("****************** CONSGETNVARS")
+    #     return {}
+
 
 
 class AmbulanceBranching(Branchrule):
     def __init__(self, model, variables):
         self.model = model
         self.variables = variables # We can add all the parameeters we need, such as the variables
+
+    def branchexeclp(self, allowaddcons):
+        print('===> Entering branchexeclp()')
+        # print(f'Choices: {self.model.getLPBranchCands()}')
+        # choice = self.model.getLPBranchCands()[0][0]
+        # Random branching
+        choice = random.choice(self.model.getLPBranchCands()[0])
+        down, eq, up = self.model.branchVar(choice)
+        # print('Branching on', choice)
+        return {"result": SCIP_RESULT.BRANCHED}
+
+    def branchexecps(self, alloaddcons):
+        print('===> Entering branchexecps()')
+        print(f'Choices: {[(i, i.getLPSol()) for i in self.model.getPseudoBranchCands()[0]]}')
+        #choice = self.model.getPseudoBranchCands()[0][0]
+        choice = random.choice(self.model.getPseudoBranchCands()[0])
+        down, eq, up = self.model.branchVar(choice)
+        print('Branching on', choice)
+        return {"result": SCIP_RESULT.BRANCHED}
         
-    def branchfree(self):
-        print('==========> Branching: Free memory')
-        pass
-    
-    def branchinit(self):
-        print('==========> Branching: Initialize')
-        pass
-    
-    def branchexit(self):
-        print('==========> Branching: Deinitialize')
-        pass
-     
-    def branchinitsol(self):
-        print('==========> Branching: Start branch and bound')
-        pass
-     
-    def branchexitsol(self):
-        print('==========> Branching: Stop branch and bound')
-        pass
+
 
     # Branching rule: Executes branching rule for fractional LP solution
     # This function must be defined by the user
-    def branchexeclp(self, allowaddcons):
-        print(f'******************* Choices: {self.model.getLPBranchCands()}')
-        #self.choice = self.model.getLPBranchCands()[0][0] if self.model.getLPBranchCands()[0][0] != 't_phi' else self.model.getLPBranchCands()[0][1]
-        self.choice = self.model.getLPBranchCands()[0][0]
-        down, eq, up = self.model.branchVar(self.choice)
-        print('==========> Branching on', self.choice)
-        return {"result": SCIP_RESULT.BRANCHED}
+    # def branchexeclp(self, allowaddcons):
+    #     print(f'******************* Choices: {self.model.getLPBranchCands()}')
+    #     #self.choice = self.model.getLPBranchCands()[0][0] if self.model.getLPBranchCands()[0][0] != 't_phi' else self.model.getLPBranchCands()[0][1]
+    #     self.choice = self.model.getLPBranchCands()[0][0]
+    #     down, eq, up = self.model.branchVar(self.choice)
+    #     print('==========> Branching on', self.choice)
+    #     return {"result": SCIP_RESULT.BRANCHED}
 
-    # Optional: Executes branching rule for external branching candidates
-    def branchexecext(self, alloaddcons):
-        print('==========> ENTERING BRANCHEXECEXT')
+    # # Optional: Executes branching rule for external branching candidates
+    # def branchexecext(self, alloaddcons):
+    #     print('==========> ENTERING BRANCHEXECEXT')
 
-    # Optional: Executes branching rule for not completely fixed pseudo solution
-    def branchexecps(self, alloaddcons):
-        print('==========> ENTERING BRANCHEXECPS')
-        print(f'******************* Choices: {self.model.getLPBranchCands()}')
-        print(f'******************* Open nodes: {self.model.getOpenNodes()}')
-        exit()
-        return {"result": SCIP_RESULT.DIDNOTRUN}
+    # # Optional: Executes branching rule for not completely fixed pseudo solution
+    # def branchexecps(self, alloaddcons):
+    #     print('==========> ENTERING BRANCHEXECPS')
+    #     print(f'******************* Choices: {self.model.getLPBranchCands()}')
+    #     print(f'******************* Open nodes: {self.model.getOpenNodes()}')
+    #     exit()
+    #     return {"result": SCIP_RESULT.DIDNOTRUN}
 
 
 
@@ -374,11 +553,11 @@ def master_problem():
     
     # Branching.
     branchrule = AmbulanceBranching(mp, x_vars)
-    mp.includeBranchrule(branchrule, '', '', priority=10000000, maxdepth=999, maxbounddist=1.0)
+    mp.includeBranchrule(branchrule, '', '', priority=100000, maxdepth=65534, maxbounddist=1.0)
 
     conshdlr = AmbulanceConshdlr()
-    mp.includeConshdlr(conshdlr, "", "", propfreq = 1, enfopriority = -10, chckpriority = -10)
-    cons = mp.createCons(conshdlr, "", modifiable=True) # modifiable since new vars will be introduced
+    mp.includeConshdlr(conshdlr, "", "", enfopriority = -10, chckpriority = -10)
+    cons = mp.createCons(conshdlr, "", modifiable=True, local=True) # modifiable since new vars will be introduced
     cons.data = SimpleNamespace()
     cons.data.vars = x_vars
     cons.data.model = mp
