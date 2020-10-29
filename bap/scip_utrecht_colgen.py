@@ -29,7 +29,7 @@ sufficient = utrecht.get_sufficient_coverage()
 # Model parameters
 num_ambulances = 20
 num_rounds = 30
-max_transition = 0.5 # 0 = no transition allowed, 1 = unlimited transitions
+max_transition = 1 # 0 = no transition allowed, 1 = unlimited transitions
 min_coverage = 0.95 # 0 = no one needs to be covered, 1 = everyone has to be covered
 max_practical_ambulances = 4 # Maximum practical number of ambulances in a zone (doesn't seem to make much of a difference). This is 4 because a base with 4 ambulances can sufficiently cover any zone no matter what its population density
 
@@ -48,19 +48,19 @@ except:
         def __eq__(self, other):
             return self.__dict__ == other.__dict__
 
-allocations = []
-coverages = []
+
 def has_hamiltonian_path(V, E, col_cov, num_times):
-    """Checks if a hamiltonian path exists
+    """Checks if a Hamiltonian path exists.
     
     Args:
       V: List of vertices (columns).
       E: List of edges (if a transition between two columns is allowed).
       col_cov: Matrix of the zone coverages of the columns (c[i][j] == 1 if
                zone i is covered by column j).
-      num_times: number of times the variable is in the solution
+      num_times: Number of times the variables are found in the solution.
 
-    Returns: True/False
+    Returns:
+      Boolean indicating if a Hamiltonian path exists
     """
     num_cols = len(V)
     num_zones = len(col_cov)
@@ -70,7 +70,7 @@ def has_hamiltonian_path(V, E, col_cov, num_times):
     G = networkx.Graph()
     G.add_nodes_from(V)
     G.add_edges_from(E)
-    # # If the graph is not connected, no Hamiltonian path can exist.
+    # If the graph is not connected, no Hamiltonian path can exist.
     if not networkx.is_connected(G):
         return False
 
@@ -91,19 +91,6 @@ def has_hamiltonian_path(V, E, col_cov, num_times):
         x_occs.append(sum(occs))
         # Every var must be used the correct number of times
         model.Add(x_occs[i] == int(num_times[i]))
-
-    # # Objective.
-    # phi = model.NewIntVar(int(lb), math.floor(ub)-1, 'phi')
-    # coverages = [model.NewIntVar(0, num_rounds, 'c'+str(i))
-    #              for i in range(num_zones)]
-    # for i in range(num_zones):
-    #     model.Add(cp_model.LinearExpr.ScalProd(x_occs, col_cov[i]) == coverages[i])
-    # phi_low = model.NewIntVar(0, num_rounds, 'phi_low')
-    # phi_high = model.NewIntVar(0, num_rounds, 'phi_high')
-    # model.AddMinEquality(phi_low, coverages)
-    # model.AddMaxEquality(phi_high, coverages)
-    # model.Add(phi == phi_high-phi_low)
-    # model.Minimize(phi)
 
     # Regular constraint (Hamiltonian path).
     # For the initial state, we use a dummy node which is connected to
@@ -126,27 +113,51 @@ def has_hamiltonian_path(V, E, col_cov, num_times):
     if status == cp_model.OPTIMAL:
         return True
     elif status == cp_model.INFEASIBLE:
+        print(V)
+        print(E)
+        print(num_times)
+        exit()
         return False
 
         
 
 class AmbulanceConshdlr(Conshdlr):
+    def __init__(self, model, vars, alloc, cov):
+        self.model = model
+        self.vars = vars
+        self.alloc = alloc
+        self.cov = cov
+    
     def consenfolp(self, constraints, nusefulconss, solinfeasible):
+        allocations = self.alloc
+        coverages = self.cov
         '''calls enforcing method of constraint handler for LP solution for all constraints added'''
         # We assume that any LP solution is feasible, since infeasibility is determined only once all variables are integer
         print("===> Entering consenfolp()")
         s = self.model
         vars = s.getVars(transformed=True) # TRANSFORMED=TRUE??
         # Check that all the vars are fixed; if one of them is not return FEASIBLE
+        at_least_one_fixed = False # there is one integer var
+        at_least_one_unfixed = False # there is one continuous var, whose bounds are not 0 to infinity
+        at_least_one_infty = False # there is one var whose bounds are 0 to infinity
         for v in vars:
-            if v.getUbLocal()-v.getLbLocal() > 0.5:
-                return {"result": SCIP_RESULT.FEASIBLE}
+            if v.getUbLocal()-v.getLbLocal() > 0.5 and v.getUbLocal() < 100000:
+                at_least_one_unfixed = True
+            elif v.getUbLocal()-v.getLbLocal() <= 0.5:
+                at_least_one_fixed = True
+            else:
+                at_least_one_infty = True
+
+        if at_least_one_unfixed == True or at_least_one_fixed == False: # Solution has at least one unfixed var or all infty vars
+            print(f'LBS {[v.getLbLocal() for v in vars]}')
+            print(f'UBS {[v.getUbLocal() for v in vars]}')
+            #input('Enter to continue')
+            return {"result": SCIP_RESULT.FEASIBLE}
 
         # Now we know all vars are fixed, let's see if there is a hamiltonian path
-        for v in vars:
-            values = [v.getUbLocal() for v in vars]
-        V = [i for i in range(len(values)) if values[i] > 0]
-        values = [values[i] for i in range(len(values)) if values[i] > 0]
+        values = [v.getLbLocal() for v in vars]
+        V = [i for i in range(len(values)) if values[i] > 0.1 and values[i] < 100000]
+        values = [values[i] for i in range(len(values)) if values[i] > 0.1 and values[i] < 100000]
         V0 = [i for i in range(len(V))]
         E = []
         for i in range(len(V0)-1):
@@ -162,25 +173,45 @@ class AmbulanceConshdlr(Conshdlr):
         # Get the coverages of the subset of columns which take nonzero values.
         c = [coverages[i] for i in range(len(coverages)) if i in V]
         c = [list(x) for x in zip(*c)]
-        if has_hamiltonian_path(V0, E, c, values):
+        has_path = has_hamiltonian_path(V0, E, c, values)
+        print(f'=======================*****************************>>>>>>>>>>>> {has_path}')
+        if has_path:
             return {"result": SCIP_RESULT.FEASIBLE}
         else:
             return {"result": SCIP_RESULT.CUTOFF}
 
     def consenfops(self, constraints, nusefulconss, solinfeasible, objinfeasible):
+        allocations = self.alloc
+        coverages = self.cov
         print("===> Entering consenfops()")
         s = self.model
         vars = s.getVars(transformed=True) # TRANSFORMED=TRUE??
         # Check that all the vars are fixed; if one of them is not return FEASIBLE
+        # for v in vars:
+        #     if v.getUbLocal()-v.getLbLocal() > 0.5 and v.getUbLocal() < 100000:
+        #         return {"result": SCIP_RESULT.FEASIBLE}
+        # Check that all the vars are fixed; if one of them is not return FEASIBLE
+        at_least_one_fixed = False # there is one integer var
+        at_least_one_unfixed = False # there is one continuous var, whose bounds are not 0 to infinity
+        at_least_one_infty = False # there is one var whose bounds are 0 to infinity
         for v in vars:
-            if v.getUbLocal()-v.getLbLocal() > 0.5:
-                return {"result": SCIP_RESULT.FEASIBLE}
+            if v.getUbLocal()-v.getLbLocal() > 0.5 and v.getUbLocal() < 100000:
+                at_least_one_unfixed = True
+            elif v.getUbLocal()-v.getLbLocal() <= 0.5:
+                at_least_one_fixed = True
+            else:
+                at_least_one_infty = True
+
+        if at_least_one_unfixed == True or at_least_one_fixed == False: # Solution has at least one unfixed var or all infty vars
+            print(f'LBS {[v.getLbLocal() for v in vars]}')
+            print(f'UBS {[v.getUbLocal() for v in vars]}')
+            #input('Enter to continue')
+            return {"result": SCIP_RESULT.FEASIBLE}
 
         # Now we know all vars are fixed, let's see if there is a hamiltonian path
-        for v in vars:
-            values = [v.getUbLocal() for v in vars]
-        V = [i for i in range(len(values)) if values[i] > 0]
-        values = [values[i] for i in range(len(values)) if values[i] > 0]
+        values = [v.getLbLocal() for v in vars]
+        V = [i for i in range(len(values)) if values[i] > 0.1 and values[i] < 100000]
+        values = [values[i] for i in range(len(values)) if values[i] > 0.1 and values[i] < 100000]
         V0 = [i for i in range(len(V))]
         E = []
         for i in range(len(V0)-1):
@@ -196,26 +227,46 @@ class AmbulanceConshdlr(Conshdlr):
         # Get the coverages of the subset of columns which take nonzero values.
         c = [coverages[i] for i in range(len(coverages)) if i in V]
         c = [list(x) for x in zip(*c)]
-        if has_hamiltonian_path(V0, E, c, values):
+        has_path = has_hamiltonian_path(V0, E, c, values)
+        print(f'=======================*****************************>>>>>>>>>>>> {has_path}')
+        if has_path:
             return {"result": SCIP_RESULT.FEASIBLE}
         else:
             return {"result": SCIP_RESULT.CUTOFF}
 
     def conscheck(self, constraints, solution, checkintegrality, checklprows, printreason, completely):
+        allocations = self.alloc
+        coverages = self.cov
         print("===> Entering conscheck()")
         assert len(constraints) == 1
         s = self.model
         vars = s.getVars(transformed=True) # TRANSFORMED=TRUE??
         # Check that all the vars are fixed; if one of them is not return FEASIBLE
+        # for v in vars:
+        #     if v.getUbLocal()-v.getLbLocal() > 0.5 and v.getUbLocal() < 100000:
+        #         return {"result": SCIP_RESULT.FEASIBLE}
+        # Check that all the vars are fixed; if one of them is not return FEASIBLE
+        at_least_one_fixed = False # there is one integer var
+        at_least_one_unfixed = False # there is one continuous var, whose bounds are not 0 to infinity
+        at_least_one_infty = False # there is one var whose bounds are 0 to infinity
         for v in vars:
-            if v.getUbLocal()-v.getLbLocal() > 0.5:
-                return {"result": SCIP_RESULT.FEASIBLE}
+            if v.getUbLocal()-v.getLbLocal() > 0.5 and v.getUbLocal() < 100000:
+                at_least_one_unfixed = True
+            elif v.getUbLocal()-v.getLbLocal() <= 0.5:
+                at_least_one_fixed = True
+            else:
+                at_least_one_infty = True
 
-        # Now we know all vars are fixed, let's see if there is a hamiltonian path
-        for v in vars:
-            values = [v.getUbLocal() for v in vars]
-        V = [i for i in range(len(values)) if values[i] > 0]
-        values = [values[i] for i in range(len(values)) if values[i] > 0]
+        if at_least_one_unfixed == True or at_least_one_fixed == False: # Solution has at least one unfixed var or all infty vars
+            print(f'LBS {[v.getLbLocal() for v in vars]}')
+            print(f'UBS {[v.getUbLocal() for v in vars]}')
+            #input('Enter to continue')
+            return {"result": SCIP_RESULT.FEASIBLE}
+
+        # # Now we know all vars are fixed, let's see if there is a hamiltonian path
+        values = [v.getLbLocal() for v in vars]
+        V = [i for i in range(len(values)) if values[i] > 0.1 and values[i] < 100000]
+        values = [values[i] for i in range(len(values)) if values[i] > 0.1 and values[i] < 100000]
         V0 = [i for i in range(len(V))]
         E = []
         for i in range(len(V0)-1):
@@ -231,98 +282,20 @@ class AmbulanceConshdlr(Conshdlr):
         # Get the coverages of the subset of columns which take nonzero values.
         c = [coverages[i] for i in range(len(coverages)) if i in V]
         c = [list(x) for x in zip(*c)]
-        if has_hamiltonian_path(V0, E, c, values):
+        has_path = has_hamiltonian_path(V0, E, c, values)
+        print(f'=======================*****************************>>>>>>>>>>>> {has_path}')
+        if has_path:
             return {"result": SCIP_RESULT.FEASIBLE}
         else:
             return {"result": SCIP_RESULT.INFEASIBLE}
 
-        #     if hampath:
-        #         return feas
-        #     else:
-        #         return infeas
-        #     if s.getSolVal(solution, v) % 1 != 0:# TODOOOOOOOOOOOOOOOOOO HERE FUNCTION TO CHECK IF HAM PATH
-        #         return {"result": SCIP_RESULT.INFEASIBLE}
-        # return {"result": SCIP_RESULT.FEASIBLE}
+        
 
     def conspresol(self, constraints, nrounds, presoltiming,
                    nnewfixedvars, nnewaggrvars, nnewchgvartypes, nnewchgbds, nnewholes,
                    nnewdelconss, nnewaddconss, nnewupgdconss, nnewchgcoefs, nnewchgsides, result_dict):
         return result_dict
 
-
-    
-    # def constrans(self, sourceconstraint):
-    #     '''sets method of constraint handler to transform constraint data into data belonging to the transformed problem '''
-    #     print("****************** CONSTRANS")
-    #     return {}
-
-    # def consinitlp(self, constraints):
-    #     '''calls LP initialization method of constraint handler to separate all initial active constraints '''
-    #     print("****************** CONSINITLP")
-    #     return {}
-
-    # def conssepalp(self, constraints, nusefulconss):
-    #     '''calls separator method of constraint handler to separate LP solution '''
-    #     print("****************** CONSSEPALP")
-    #     return {}
-
-    # def conssepasol(self, constraints, nusefulconss, solution):
-    #     '''calls separator method of constraint handler to separate given primal solution '''
-    #     print("****************** CONSSEPASOL")
-    #     return {}
-
-    # def consenfolp(self, constraints, nusefulconss, solinfeasible):
-    #     '''calls enforcing method of constraint handler for LP solution for all constraints added'''
-    #     print("****************** CONSENFOLP")
-    #     print('solution is:', [constraints[0].data.model.getVal(i) for i in constraints[0].data.vars])
-    #     """In contrast to the LP branching candidates and the pseudo branching candidates, the list of external branching candidates will not be generated automatically. The user has to add all variables to the list by calling SCIPaddExternBranchCand() for each of them. Usually, this will happen in the execution method of a relaxation handler or in the enforcement methods of a constraint handler."""
-    #     return {"result": SCIP_RESULT.BRANCHED}
-
-    # def consenforelax(self, solution, constraints, nusefulconss, solinfeasible):
-    #     '''calls enforcing method of constraint handler for a relaxation solution for all constraints added'''
-    #     print("****************** CONSENFORELAX")
-    #     return {}
-
-    # def consenfops(self, constraints, nusefulconss, solinfeasible, objinfeasible):
-    #     '''calls enforcing method of constraint handler for pseudo solution for all constraints added'''
-    #     print("****************** CONSENFOPS")
-    #     return {}
-
-    # def conscheck(self, constraints, solution, checkintegrality, checklprows, printreason, completely):
-    #     '''calls feasibility check method of constraint handler '''
-    #     # if the solution is not integer then it is valid by default, since we only check integer solutions
-    #     # check for hamiltonian path
-    #     print("****************** CONSCHECK")
-    #     assert len(constraints) == 1
-    #     print('solution is:', [constraints[0].data.model.getVal(i) for i in constraints[0].data.vars])
-    #     return {"result": SCIP_RESULT.INFEASIBLE}
-
-    # def consprop(self, constraints, nusefulconss, nmarkedconss, proptiming):
-    #     '''calls propagation method of constraint handler '''
-    #     print("****************** CONSPROP")
-    #     return {}
-
-    # def conspresol(self, constraints, nrounds, presoltiming,
-    #                nnewfixedvars, nnewaggrvars, nnewchgvartypes, nnewchgbds, nnewholes,
-    #                nnewdelconss, nnewaddconss, nnewupgdconss, nnewchgcoefs, nnewchgsides, result_dict):
-    #     '''calls presolving method of constraint handler '''
-    #     print("****************** CONSPRESOL")
-    #     return result_dict
-
-    # def consresprop(self):
-    #     '''sets propagation conflict resolving method of constraint handler '''
-    #     print("****************** CONSRESPROP")
-    #     return {}
-
-    # def conslock(self, constraint, locktype, nlockspos, nlocksneg):
-    #     '''variable rounding lock method of constraint handler'''
-    #     print("****************** CONSLOCK")
-    #     return {}
-
-    # def consgetnvars(self, constraint):
-    #     '''sets constraint variable number getter method of constraint handler '''
-    #     print("****************** CONSGETNVARS")
-    #     return {}
 
 
 
@@ -350,30 +323,6 @@ class AmbulanceBranching(Branchrule):
         print('Branching on', choice)
         return {"result": SCIP_RESULT.BRANCHED}
         
-
-
-    # Branching rule: Executes branching rule for fractional LP solution
-    # This function must be defined by the user
-    # def branchexeclp(self, allowaddcons):
-    #     print(f'******************* Choices: {self.model.getLPBranchCands()}')
-    #     #self.choice = self.model.getLPBranchCands()[0][0] if self.model.getLPBranchCands()[0][0] != 't_phi' else self.model.getLPBranchCands()[0][1]
-    #     self.choice = self.model.getLPBranchCands()[0][0]
-    #     down, eq, up = self.model.branchVar(self.choice)
-    #     print('==========> Branching on', self.choice)
-    #     return {"result": SCIP_RESULT.BRANCHED}
-
-    # # Optional: Executes branching rule for external branching candidates
-    # def branchexecext(self, alloaddcons):
-    #     print('==========> ENTERING BRANCHEXECEXT')
-
-    # # Optional: Executes branching rule for not completely fixed pseudo solution
-    # def branchexecps(self, alloaddcons):
-    #     print('==========> ENTERING BRANCHEXECPS')
-    #     print(f'******************* Choices: {self.model.getLPBranchCands()}')
-    #     print(f'******************* Open nodes: {self.model.getOpenNodes()}')
-    #     exit()
-    #     return {"result": SCIP_RESULT.DIDNOTRUN}
-
 
 
 class AmbulancePricer(Pricer):
@@ -407,15 +356,6 @@ class AmbulancePricer(Pricer):
         # Variables.
         c_vars = [pp.addVar(vtype='B', obj=-dual_solutions[i]) for i in range(n)] # DEBUG: obj
         u_vars = [pp.addVar(vtype='I', lb=0, ub=max_practical_ambulances) for _ in range(len(bases))] # ub is 4 since that's the best coverage that the base can offer in any case
-
-        # # Forbid the generation of existing columns.
-        # binary_bases = [[pp.addVar(vtype='B') for _ in range(num_ambulances+1)] for _ in range(len(bases))]
-        # for i in range(len(bases)):
-        #     for j in range(num_ambulances+1):
-        #         pp.addConsIndicator(u_vars[i] <= j, binary_bases[i][j])
-        #         pp.addConsIndicator(u_vars[i] >= j, binary_bases[i][j])
-        # for i in self.data['allocations']:
-        #     pp.addCons(quicksum(binary_bases[j][i[j]] for j in range(len(i))) <= sum(i) -1)
         
         # Big M constraints (link c and u).
         bigM = num_ambulances*2
@@ -441,7 +381,6 @@ class AmbulancePricer(Pricer):
 
             # Creating new var; must set pricedVar to True
             # A new variable is created for the new pattern
-            # TODO: put back to integer
             newVar = self.model.addVar(f"NewPattern_{len(self.data['allocations'])}", vtype = "I", pricedVar = True) # pricedVar=True says that this variable was generated by the PP
 
             # Adding the new variable to the constraints of the master problem
@@ -519,12 +458,6 @@ def master_problem():
     allocations = [allocation]
     coverages = [coverage]
     
-    # DEBUG: Optimal solution for 20 ambulances, 95% coverage and 3 rounds (solution = 2)
-    # allocations = [[0, 1, 0, 2, 1, 2, 0, 0, 4, 0, 2, 4, 0, 2, 2, 0, 0, 0],
-    #                [2, 3, 0, 1, 0, 4, 0, 0, 1, 1, 3, 0, 0, 1, 1, 3, 0, 0],
-    #                [2, 1, 1, 1, 0, 3, 0, 0, 2, 0, 0, 4, 2, 0, 3, 0, 1, 0]]
-    # coverages = [utrecht.allocation_coverage(x) for x in allocations]
-    
     # Objective.
     # TODO: put back to integer
     phi = mp.addVar(name='phi', vtype='I') # M = implicit integer
@@ -555,17 +488,16 @@ def master_problem():
     branchrule = AmbulanceBranching(mp, x_vars)
     mp.includeBranchrule(branchrule, '', '', priority=100000, maxdepth=65534, maxbounddist=1.0)
 
-    conshdlr = AmbulanceConshdlr()
+    conshdlr = AmbulanceConshdlr(mp, x_vars, allocations, coverages)
     mp.includeConshdlr(conshdlr, "", "", enfopriority = -10, chckpriority = -10)
     cons = mp.createCons(conshdlr, "", modifiable=True, local=True) # modifiable since new vars will be introduced
-    cons.data = SimpleNamespace()
-    cons.data.vars = x_vars
-    cons.data.model = mp
+    #cons.data = SimpleNamespace()
+    # cons.data['vars'] = x_vars
+    # cons.data['model'] = mp
+    # cons.data['allocations'] = allocations
+    # cons.data['coverages'] = coverages
     mp.addPyCons(cons)
     
-    # relax = AmbulanceRelax(mp)
-    # mp.includeRelax(relax, '', '', 10000, 1)
-
     mp.optimize()
 
     print('=====================================')
