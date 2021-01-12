@@ -4,7 +4,7 @@ import random
 import numpy as np
 
 
-def MaternProcess(lambdaParent = 60, lambdaDaughter = 5, radiusCluster = 5, plot=False):
+def MaternProcess(lambdaParent = 10, lambdaDaughter = 5, radiusCluster = 5, plot=False):
     """
     Simulate a Matern point process on a rectangle.
     Author: H. Paul Keeler, 2018.
@@ -44,6 +44,7 @@ def MaternProcess(lambdaParent = 60, lambdaDaughter = 5, radiusCluster = 5, plot
     # Simulate Poisson point process for the daughters (ie final poiint process)
     numbPointsDaughter = np.random.poisson(lambdaDaughter, numbPointsParent);
     numbPoints = sum(numbPointsDaughter);  # total number of points
+    print(f'===================> {numbPoints} zones created')
 
     # Generate the (relative) locations in polar coordinates by
     # simulating independent variables.
@@ -109,6 +110,7 @@ class Utrecht:
 
         self.randomize = randomize
         random.seed(seed)
+        np.random.seed(seed)
         
         self.load()
         self.build_graph()        
@@ -170,7 +172,7 @@ class Utrecht:
                 Distance metric
                 """
                 # Manhattan distance
-                return abs(x1-x2)+abs(y1-y2)
+                # return abs(x1-x2)+abs(y1-y2)
                 # Asymmetric Manhattan distance
                 return abs(x1-x2)+abs(y1-y2) + 0.05*(x1-x2)
                 # Euclidean distance
@@ -202,7 +204,9 @@ class Utrecht:
 
                 
     def get_population_densities(self):
-        return [x[1] for x in self.V]
+        densities = [x[1] for x in self.V]
+        #random.Random(0).shuffle(densities)
+        return densities
 
 
     def get_sufficient_coverage(self):

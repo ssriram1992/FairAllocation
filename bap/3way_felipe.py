@@ -158,7 +158,8 @@ class CutBranching(Branchrule):
     def branchexecps(self, alloaddcons):
         print('===> Entering branchexecps()')
         print(f'Choices: {[(i, i.getLPSol()) for i in self.model.getPseudoBranchCands()[0]]}')
-        choice = self.model.getPseudoBranchCands()[0][0]
+        #choice = self.model.getPseudoBranchCands()[0][0]
+        choice = random.choice(self.model.getPseudoBranchCands()[0])
         down, eq, up = self.model.branchVar(choice)
         print('Branching on', choice)
         return {"result": SCIP_RESULT.BRANCHED}

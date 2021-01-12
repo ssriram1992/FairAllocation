@@ -11,15 +11,14 @@ import networkx
 import numpy
 from ortools.sat.python import cp_model
 from utrecht_scip import *
+#from utrecht_custom import *  # <<<<<<<<<<<<<<<<<<<<<----------------------------------------- COMMENT ONE OR THE OTHER OF THOSE DEPENDING ON THE INSTANCE
 import sys
 import time
 # for i in {20..1}; do mt=`bc -l <<< $i/20`; echo $mt; python final.py $mt > 0$mt.txt; done
 
-
-### PARAMETERS #################################################################
-
 EPS = 1e-6
 
+### PARAMETERS for utrecht #################################################################
 randomize_graph = False
 seed = 0
 
@@ -27,6 +26,7 @@ seed = 0
 # that "95% of all calls should be reached within 15 minutes (900 seconds)".
 utrecht = Utrecht(randomize_graph, seed)
 utrecht.reduce_graph(900)
+#exit()
 
 # Bases are the only vertices that can be allocated ambulances.
 bases = utrecht.B
@@ -51,7 +51,40 @@ min_coverage = 0.95 # 0 = no one needs to be covered, 1 = everyone has to be cov
 max_practical_ambulances = max(sufficient)
 mp_integer = False # True: The once the LP is optimal, the MP is solved with integer constraints on these columns, and this solution is given to the CP model. False: The LP solution is given to the CP model.
 verbose = True
-time_limit = 300
+time_limit = 1200
+
+
+### PARAMETERS for custom instances #################################################################
+# print_to_file = True
+# if print_to_file:
+#     sys.stdout = open(f"{sys.argv[1]}.results", "a")
+# utrecht = Utrecht(f'{sys.argv[1]}.gpickle', f'{sys.argv[1]}.bases')
+
+# # Bases are the only vertices that can be allocated ambulances.
+# bases = utrecht.B
+# n = len(utrecht.V)
+
+# # Replace the seconds by a boolean representing if the zones are close enough
+# # to cover each other or not.
+# adj = utrecht.get_binary_adjacency()
+
+# # Sufficient coverage required for various population densities.
+# sufficient = utrecht.get_sufficient_coverage()
+
+# # Other parameters.
+# num_ambulances = 20
+# num_rounds = 30
+# cl = True # Accept arguments from the command line
+# if cl:
+#     max_transition = float(sys.argv[2])
+# else:
+#     max_transition = 0.5 # 0 = no transition allowed, 1 = unlimited transitions
+# min_coverage = 0.95 # 0 = no one needs to be covered, 1 = everyone has to be covered
+# max_practical_ambulances = max(sufficient)
+# mp_integer = False # True: The once the LP is optimal, the MP is solved with integer constraints on these columns, and this solution is given to the CP model. False: The LP solution is given to the CP model.
+# verbose = False
+# time_limit = 1200
+
 
 ################################################################################
 
@@ -82,7 +115,7 @@ def initial_feasible_configuration():
     m.optimize()
     allocation = [round(m.getVarByName(f'x[{i}]').X) for i in range(len(x))]
     coverage = utrecht.allocation_coverage(allocation)
-
+    
     return allocation, coverage
 
 
@@ -179,7 +212,7 @@ def master_problem(cuts, lb=0, ub=num_rounds, integrality=False):
     return obj, x_res, [sum([-x[0], -x[1]]) for x in zip(duals_low, duals_high)], mu
 
 
-def cp_solve(V, E, col_cov, cuts=[]):
+def cp_solve(V, E, lb, ub, col_cov, cuts=[], tl=999999):
     """Solves a partial problem with a CP model.
     
     Args:
@@ -194,6 +227,7 @@ def cp_solve(V, E, col_cov, cuts=[]):
         connected (this latter case has been removed).
       - A feasible solution for this objective value.
     """
+    cp_start_time = time.time()
     num_cols = len(V)
     num_zones = len(col_cov)
     
@@ -228,6 +262,8 @@ def cp_solve(V, E, col_cov, cuts=[]):
         model.Add(sum(x_occs[i] for i in range(num_cols) if i in cut) <= num_rounds-1)
 
     # Objective.
+    if ub == 9999:
+        ub = num_rounds+1
     phi = model.NewIntVar(int(lb), math.floor(ub)-1, 'phi')
     coverages = [model.NewIntVar(0, num_rounds, 'c'+str(i))
                  for i in range(num_zones)]
@@ -249,20 +285,26 @@ def cp_solve(V, E, col_cov, cuts=[]):
     arcs = [(dummy, i, i) for i in V]
     for e in E:
         arcs.append((e[0], e[1], e[1]))
+    # Node self-loops
+    for v in V:
+        arcs.append((v, v, v))
     # If there is only one vertex then a Hamiltonian path exists.
     if len(V) > 1:
         model.AddAutomaton(x, start, end, arcs)
 
     # Solve the model.
     solver = cp_model.CpSolver()
+    solver.parameters.max_time_in_seconds = tl
     status = solver.Solve(model)
-    assert status == cp_model.OPTIMAL or status == cp_model.INFEASIBLE
+    #assert status == cp_model.OPTIMAL or status == cp_model.INFEASIBLE or status == cp_model.FEASIBLE
 
     if status == cp_model.OPTIMAL:
         solution = [solver.Value(x[i]) for i in range(num_rounds)]
-        return solver.ObjectiveValue(), solution
-    elif status == cp_model.INFEASIBLE:
-        return -1, []
+        return solver.ObjectiveValue(), solution, time.time()-cp_start_time
+    elif status == cp_model.INFEASIBLE or status == cp_model.UNKNOWN:
+        return -1, [], time.time()-cp_start_time
+    elif status == cp_model.FEASIBLE:
+        return solver.ObjectiveValue(), [], time.time()-cp_start_time
 
 
 start_time = time.time()
@@ -274,11 +316,13 @@ allocation, coverage = initial_feasible_configuration()
 allocations = [allocation]
 coverages = [coverage]
 
+ilb = -1 # initial LB, -1 means that it hasn't been set yet
 mp_cuts = []
 lb = 0
-ub = num_rounds+1
+ub = 9999#num_rounds+1
 lp_optimal = False
 lp_obj = -1
+cp_total_time = 0
 while True:
     if time.time() - start_time > time_limit:
         break
@@ -289,7 +333,12 @@ while True:
         lp_obj = obj
     if lp_optimal:
         lb = math.ceil(obj)
+        if ilb == -1:
+            ilb = lb
 
+    if lb==ub:
+        break
+        
     if verbose:
         print(f'LP obj: {round(lp_obj, 2)},\tLB: {lb},\tUB: {ub},\t{len(x_res)} columns,\t{len(mp_cuts)} cuts')
 
@@ -329,20 +378,24 @@ while True:
         c = [list(x) for x in zip(*c)]
 
         # Solve the CP model.
-        cp_obj, cp_sol = cp_solve(V0, E, c, cp_cuts)
-        if verbose:
-            if cp_obj == -2:
+        cp_obj, cp_sol, cp_time = cp_solve(V0, E, lb, ub, c, cp_cuts, time_limit-(time.time()-start_time))
+        cp_total_time += cp_time
+        
+        if cp_obj == -2:
+            if verbose:
                 print(f'CP solution infeasible: Graph is not connected.')
-            elif cp_obj == -1:
+        elif cp_obj == -1:
+            if verbose:
                 print(f'CP solution infeasible: Graph is connected, but contains no Hamiltonian path within the LB/UB limits.')
-            else:
+        else:
+            if verbose:
                 print(f'CP solution is feasible with value {cp_obj}.')
-                lb = min(lb, cp_obj)
+            lb = min(lb, cp_obj)
 
         if cp_obj > math.ceil(lb):
             lp_optimal = False
             mp_cuts.append(V)
-            ub = min(cp_obj, ub)
+            ub = int(min(cp_obj, ub))
             continue
         else:
             # If the CP model outputs an infeasible solution, add the cut and continue
@@ -355,15 +408,20 @@ while True:
                 check_allocations.append(allocations[V[V0[i]]])
             check_value = max(utrecht.allocations_coverage(check_allocations))-min(utrecht.allocations_coverage(check_allocations))
             assert check_value == lb, f'{check_value} vs {lb}'
-            print('Optimality is proven.')
+            ub = check_value
+            if verbose:
+                print('Optimality is proven.')
             break
     
     allocation, coverage = pricing_problem(duals, mu)
     if allocation in allocations:
-        print('Generated column already exists.')
+        if verbose:
+            print('Generated column already exists.')
         lp_optimal = True
     coverages.append(coverage)
     allocations.append(allocation)
 
-print(f'{len(allocations)},{len(mp_cuts)},{lb},{ub}')
+print('PHOLIFLAG')
+print(f'{max_transition},{len(allocations)},{len(mp_cuts)},{lb},{ub},{ilb}')
 print(time.time()-start_time)
+#print(f'CP time: {cp_total_time}')

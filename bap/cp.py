@@ -43,8 +43,8 @@ def cp_solve(V, E, cov, num_rounds, ip_ub, cuts=[]):
       ip_ub: Upper bound of the IP node that the CP model is solving.
 
     Returns:
-      - Objective value of the best Hamiltonian path, negative integer if no
-        path exists.
+      - Objective value of the best Hamiltonian path, -1 if there is no
+        Hamiltonian path, -2 if the graph is not connected.
       - A feasible solution for this objective value.
     """
     num_cols = len(V)
@@ -73,7 +73,7 @@ def cp_solve(V, E, cov, num_rounds, ip_ub, cuts=[]):
             model.Add(x[j] != i).OnlyEnforceIf(boolvar.Not())
             occs.append(boolvar)
         x_occs.append(sum(occs))
-        #model.AddLinearConstraint(x_occs[i], 1, num_rounds-num_cols+1)
+        model.AddLinearConstraint(x_occs[i], 1, num_rounds-num_cols+1) # we remove this since we use the LP solution
 
     # Add the CP cuts.
     for cut in cuts:

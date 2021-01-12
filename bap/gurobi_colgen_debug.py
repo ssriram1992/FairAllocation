@@ -27,7 +27,7 @@ sufficient = utrecht.get_sufficient_coverage()
 # Model parameters
 num_ambulances = 20
 num_rounds = 30
-max_transition = 0.3 # 0 = no transition allowed, 1 = unlimited transitions
+max_transition = 0.4 # 0 = no transition allowed, 1 = unlimited transitions
 min_coverage = 0.95 # 0 = no one needs to be covered, 1 = everyone has to be covered
 max_practical_ambulances = 4 # Maximum practical number of ambulances in a zone (doesn't seem to make much of a difference). This is 4 because a base with 4 ambulances can sufficiently cover any zone no matter what its population density
 cuts = []
@@ -95,7 +95,6 @@ coverages = [coverage]
 
 
 def pricing_problem(duals, mu):
-    # INPUT: duals, etc
     pp = gp.Model('PP')
     pp.Params.OutputFlag = 0
     c_vars = [pp.addVar(vtype='B', name='c'+str(i)) for i in range(n)]
@@ -181,19 +180,18 @@ optimal = False
 relaxed_obj = -1
 while True:
 
-    # if optimal:
-    #     obj, x_res, duals, mu = master_problem(cuts, True)
-    # else:
-    #     obj, x_res, duals, mu = master_problem(cuts, False)
-    obj, x_res, duals, mu = master_problem(cuts, False) #<==============================================
-    
+    if optimal:
+        obj, x_res, duals, mu = master_problem(cuts, True)
+    else:
+        obj, x_res, duals, mu = master_problem(cuts, False)
+
     if not optimal:
         relaxed_obj = obj
     print(f'==========>>> MP objective: {obj} ({len(cuts)} cuts)')
     if optimal:
         x_res = [(i, int(x_res[i])) for i in range(len(x_res))]
-        print(f'The optimal LP solution uses {len(x_res)} variables.')
         V = [i[0] for i in x_res if i[1] > 0]
+        print(f'The IP solution uses {len(V)} variables.')
         V0 = [i for i in range(len(V))] # States of the automaton must start at 0.
         # CP cuts must be adjusted to start form 0, like V0
         cp_cuts = []
